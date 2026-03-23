@@ -13,15 +13,6 @@ Quickly spin up git worktrees with all gitignored config files synced and depend
 - List active worktrees
 - Debug worktree setup issues (e.g., git hooks, file sync)
 
-## Installation
-
-```bash
-# Clone and symlink
-git clone https://github.com/aryasaatvik/wt ~/Developer/wt
-ln -s ~/Developer/wt/bin/wt ~/.local/bin/wt
-ln -s ~/Developer/wt/completions/wt.zsh ~/.zsh/completions/wt.zsh
-```
-
 Requires: `git`, `rsync`, [`ni`](https://github.com/antfu/ni).
 
 ## Quick Decision Tree

@@ -10,11 +10,20 @@ Git worktree helper that creates worktrees with gitignored file sync and depende
 
 ## Install
 
+### From release
+
+```bash
+curl -sL https://github.com/aryasaatvik/wt/releases/latest/download/wt-v1.0.0.tar.gz | tar -xz -C /tmp
+cp /tmp/bin/wt ~/.local/bin/wt
+```
+
+For completions, copy `completions/wt.zsh` to your zsh completions directory or source it in your `.zshrc`.
+
+### From source
+
 ```bash
 git clone https://github.com/aryasaatvik/wt ~/Developer/wt
 ln -s ~/Developer/wt/bin/wt ~/.local/bin/wt
-
-# Optional: zsh completions
 ln -s ~/Developer/wt/completions/wt.zsh ~/.zsh/completions/wt.zsh
 ```
 
