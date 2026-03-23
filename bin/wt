@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# ──────────────────────────────────────────────────────────────
+# wt - git worktree helper
+#
+# Quickly spin up git worktrees with all the gitignored config
+# files (env, scratchpad, editor settings, etc.) synced from
+# the source repo, then install dependencies automatically.
+#
+# Usage:
+#   wt [new|create] <branch> [base]  Create worktree (base defaults to main)
+#   wt rm|remove <branch>            Remove worktree and delete branch
+#   wt ls|list                       List all worktrees
+#   wt -h | --help                   Show this help
+#   wt --verbose                     Verbose rsync output
+#
+# Worktree layout:
+#   Worktrees are created as siblings of the repo directory:
+#     ~/Developer/myrepo/             <- source repo
+#     ~/Developer/myrepo-worktrees/   <- worktree parent
+#       x-my-feature/                 <- branch x/my-feature (slashes → dashes)
+#       fix-login-bug/                <- branch fix-login-bug
+#
+# File sync:
+#   Uses `git ls-files --others --ignored --exclude-standard` to
+#   find all gitignored files, then rsyncs them to the worktree.
+#   Heavy artifacts (node_modules, build dirs, etc.) are excluded
+#   via the SYNC_EXCLUDE array below. Edit that array to customize.
+#
+# Dependencies:
+#   Install step uses `ni` (https://github.com/antfu/ni) which
+#   auto-detects the package manager from the lockfile. Skipped
+#   gracefully if ni is not installed or no lockfile is present.
+#
+# Design notes:
+#   - .git in a worktree is a file (not a dir) pointing back to
+#     the main repo. Tools like `hk install` that assume .git is
+#     a directory will fail. The prepare script in package.json
+#     guards with `[ -f .git ]` to skip hook install in worktrees.
+#   - rsync copies filesystem state, not git state. This is
+#     intentional — .env files and .scratchpad are gitignored so
+#     they have no committed version to extract from git.
+#   - The spinner hides cursor and clears its line on exit.
+#     The ni install step does NOT use the spinner so its output
+#     (package list, timing) is visible to the user.
+#   - Paths are resolved via `cd .. && pwd` to avoid displaying
+#     ugly /foo/../bar-worktrees paths.
+#
+# Completions: ~/.zsh/completions/wt.zsh
+# ──────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+# ANSI colors
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+RED='\033[0;31m'
+DIM='\033[2m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+# Braille spinner frames
+SPINNER=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+
+# Exclusions for gitignored file sync (heavy/generated artifacts)
+SYNC_EXCLUDE=(
+  # JS/TS
+  node_modules .next .turbo dist .vercel .cache
+  # Xcode/Swift
+  build .build DerivedData Pods Carthage xcuserdata
+  # Misc
+  .wrangler
+)
+
+log()  { printf "  ${GREEN}✓${NC} %b\n" "$1"; }
+info() { printf "  ${CYAN}→${NC} %b\n" "$1"; }
+err()  { printf "  ${RED}✗${NC} %b\n" "$1" >&2; }
+
+spin() {
+  local pid=$1 msg=$2 frame=0
+  printf "\033[?25l"
+  while kill -0 "$pid" 2>/dev/null; do
+    printf "\r\033[K  ${CYAN}${SPINNER[$frame]}${NC} %b" "$msg"
+    frame=$(( (frame + 1) % ${#SPINNER[@]} ))
+    sleep 0.08
+  done
+  wait "$pid" 2>/dev/null
+  local rc=$?
+  printf "\r\033[K"
+  printf "\033[?25h"
+  return $rc
+}
+
+show_help() {
+  printf "${BOLD}Usage:${NC} wt <command> [args]\n"
+  echo ""
+  printf "${BOLD}Commands:${NC}\n"
+  echo "  wt [new|create] <branch> [base]"
+  echo "                       Create worktree from base branch (default: main)"
+  echo "  wt rm|remove <branch> Remove worktree and delete branch"
+  echo "  wt ls|list            List all worktrees"
+  echo ""
+  printf "${BOLD}Options:${NC}\n"
+  echo "  --verbose            Show detailed rsync output"
+  echo "  -h, --help           Show this help"
+}
+
+# Parse --verbose flag
+VERBOSE=false
+ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --verbose) VERBOSE=true ;;
+    *) ARGS+=("$arg") ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+
+# No args or help
+if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
+  show_help
+  exit 0
+fi
+
+# ── ls ────────────────────────────────────────────────────────
+if [[ "$1" == "ls" || "$1" == "list" ]]; then
+  git worktree list
+  exit 0
+fi
+
+# ── rm ────────────────────────────────────────────────────────
+if [[ "$1" == "rm" || "$1" == "remove" ]]; then
+  branch="${2:-}"
+  [[ -z "$branch" ]] && show_help && exit 1
+  slug="${branch//\//-}"
+  repo_root="$(git rev-parse --show-toplevel)"
+  repo_name="$(basename "$repo_root")"
+  wt_dir="$(cd "${repo_root}/.." && pwd)/${repo_name}-worktrees/${slug}"
+  info "Removing worktree ${BOLD}${slug}${NC}"
+  (git worktree remove "$wt_dir" && git branch -D "$branch" >/dev/null 2>&1) &
+  if spin $! "Removing worktree"; then
+    log "Removed ${DIM}${wt_dir}${NC}"
+  else
+    err "Failed to remove worktree"
+    exit 1
+  fi
+  exit 0
+fi
+
+# ── create ────────────────────────────────────────────────────
+if [[ "$1" == "new" || "$1" == "create" ]]; then
+  branch="${2:-}"
+  base="${3:-main}"
+  [[ -z "$branch" ]] && show_help && exit 1
+else
+  branch="$1"
+  base="${2:-main}"
+fi
+
+slug="${branch//\//-}"
+repo_root="$(git rev-parse --show-toplevel)"
+repo_name="$(basename "$repo_root")"
+wt_dir="$(cd "${repo_root}/.." && pwd)/${repo_name}-worktrees/${slug}"
+
+echo ""
+info "Creating worktree ${BOLD}${branch}${NC} from ${DIM}${base}${NC}"
+
+git worktree add -b "$branch" "$wt_dir" "$base" >/dev/null 2>&1 &
+if spin $! "Creating worktree"; then
+  log "Worktree created at ${DIM}${wt_dir}${NC}"
+else
+  err "Failed to create worktree"
+  exit 1
+fi
+
+# Sync all gitignored files except heavy artifacts
+info "Syncing gitignored files"
+exclude_pattern=$(printf "|(%s)" "${SYNC_EXCLUDE[@]}")
+exclude_pattern="(^|/)(${exclude_pattern:1})/"
+
+rsync_flags="-a"
+[[ "$VERBOSE" == true ]] && rsync_flags="-av"
+
+file_count=$(git -C "$repo_root" ls-files --others --ignored --exclude-standard \
+  | grep -Ev "$exclude_pattern" | wc -l | tr -d ' ')
+
+(git -C "$repo_root" ls-files --others --ignored --exclude-standard \
+  | grep -Ev "$exclude_pattern" \
+  | rsync $rsync_flags --files-from=- "$repo_root/" "$wt_dir/" >/dev/null 2>&1 || true) &
+spin $! "Syncing ${file_count} files"
+log "Synced ${BOLD}${file_count}${NC} files"
+
+# Install dependencies
+if command -v ni >/dev/null 2>&1; then
+  info "Installing dependencies"
+  echo ""
+  (cd "$wt_dir" && ni) &
+  wait $!
+  ni_rc=$?
+  echo ""
+  if [[ $ni_rc -eq 0 ]]; then
+    log "Dependencies installed"
+  else
+    err "Dependency install failed (run manually in worktree)"
+  fi
+else
+  info "Skipping install (ni not found)"
+fi
+
+echo ""
+log "Worktree ready at ${BOLD}${wt_dir}${NC}"
+echo ""
