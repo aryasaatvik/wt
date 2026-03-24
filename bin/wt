@@ -22,7 +22,11 @@
 #
 # File sync:
 #   Uses `git ls-files --others --ignored --exclude-standard` to
-#   find all gitignored files, then rsyncs them to the worktree.
+#   find all gitignored files in the source repo, then filters
+#   through `git check-ignore` in the worktree so only files that
+#   are also ignored by the base branch's gitignore are synced.
+#   This prevents untracked files when the source checkout has a
+#   different .gitignore than the base branch.
 #   Heavy artifacts (node_modules, build dirs, etc.) are excluded
 #   via the SYNC_EXCLUDE array below. Edit that array to customize.
 #
@@ -143,7 +147,7 @@ if [[ "$1" == "rm" || "$1" == "remove" ]]; then
   repo_name="$(basename "$repo_root")"
   wt_dir="$(cd "${repo_root}/.." && pwd)/${repo_name}-worktrees/${slug}"
   info "Removing worktree ${BOLD}${slug}${NC}"
-  (git worktree remove "${extra_flags[@]}" "$wt_dir" && git branch -D "$branch" >/dev/null 2>&1) &
+  (git worktree remove ${extra_flags[@]+"${extra_flags[@]}"} "$wt_dir" && git branch -D "$branch" >/dev/null 2>&1) &
   if spin $! "Removing worktree"; then
     log "Removed ${DIM}${wt_dir}${NC}"
   else
@@ -175,7 +179,7 @@ wt_dir="$(cd "${repo_root}/.." && pwd)/${repo_name}-worktrees/${slug}"
 echo ""
 info "Creating worktree ${BOLD}${branch}${NC} from ${DIM}${base}${NC}"
 
-git worktree add -b "$branch" "$wt_dir" "$base" "${extra_flags[@]}" >/dev/null 2>&1 &
+git worktree add -b "$branch" "$wt_dir" "$base" ${extra_flags[@]+"${extra_flags[@]}"} >/dev/null 2>&1 &
 if spin $! "Creating worktree"; then
   log "Worktree created at ${DIM}${wt_dir}${NC}"
 else
@@ -183,7 +187,7 @@ else
   exit 1
 fi
 
-# Sync all gitignored files except heavy artifacts
+# Sync gitignored files that are also ignored in the worktree
 info "Syncing gitignored files"
 exclude_pattern=$(printf "|(%s)" "${SYNC_EXCLUDE[@]}")
 exclude_pattern="(^|/)(${exclude_pattern:1})/"
@@ -191,11 +195,14 @@ exclude_pattern="(^|/)(${exclude_pattern:1})/"
 rsync_flags="-a"
 [[ "$VERBOSE" == true ]] && rsync_flags="-av"
 
-file_count=$(git -C "$repo_root" ls-files --others --ignored --exclude-standard \
-  | grep -Ev "$exclude_pattern" | wc -l | tr -d ' ')
-
-(git -C "$repo_root" ls-files --others --ignored --exclude-standard \
+# Get ignored files from source, filter out heavy artifacts,
+# then keep only files that are also ignored by the worktree's gitignore
+sync_files=$(git -C "$repo_root" ls-files --others --ignored --exclude-standard \
   | grep -Ev "$exclude_pattern" \
+  | git -C "$wt_dir" check-ignore --stdin 2>/dev/null || true)
+file_count=$(echo "$sync_files" | grep -c . || true)
+
+(echo "$sync_files" \
   | rsync $rsync_flags --files-from=- "$repo_root/" "$wt_dir/" >/dev/null 2>&1 || true) &
 spin $! "Syncing ${file_count} files"
 log "Synced ${BOLD}${file_count}${NC} files"
