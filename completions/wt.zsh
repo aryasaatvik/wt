@@ -26,8 +26,10 @@ _wt() {
     args)
       case "${words[1]}" in
         rm|remove)
-          # Complete with existing worktree branch names
-          _wt_worktree_branches
+          _arguments \
+            '(-D --delete-branch)'{-D,--delete-branch}'[Also delete the branch]' \
+            '*:worktree branch:_wt_worktree_branches'
+          return
           ;;
         new|create)
           if [[ $CURRENT -eq 2 ]]; then

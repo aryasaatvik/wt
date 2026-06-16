@@ -7,8 +7,9 @@
 # the source repo, then install dependencies automatically.
 #
 # Usage:
-#   wt [new|create] <branch> [base] [flags]  Create worktree (base defaults to main)
-#   wt rm|remove <branch> [flags]            Remove worktree and delete branch
+#   wt [new|create] <branch> [base] [flags]  Create worktree (or checkout existing branch)
+#   wt rm|remove <branch> [flags]            Remove worktree (keeps branch by default)
+#                                            Pass -D/--delete-branch to also delete the branch
 #   wt ls|list [flags]                       List all worktrees
 #   wt -h | --help                   Show this help
 #   wt --verbose                     Verbose rsync output
@@ -81,17 +82,50 @@ err()  { printf "  ${RED}✗${NC} %b\n" "$1" >&2; }
 
 spin() {
   local pid=$1 msg=$2 frame=0
-  printf "\033[?25l"
-  while kill -0 "$pid" 2>/dev/null; do
-    printf "\r\033[K  ${CYAN}${SPINNER[$frame]}${NC} %b" "$msg"
-    frame=$(( (frame + 1) % ${#SPINNER[@]} ))
-    sleep 0.08
-  done
-  wait "$pid" 2>/dev/null
-  local rc=$?
-  printf "\r\033[K"
-  printf "\033[?25h"
-  return $rc
+  if [[ -t 1 ]]; then
+    printf "\033[?25l"
+    while kill -0 "$pid" 2>/dev/null; do
+      printf "\r\033[K  ${CYAN}${SPINNER[$frame]}${NC} %b" "$msg"
+      frame=$(( (frame + 1) % ${#SPINNER[@]} ))
+      sleep 0.08
+    done
+    wait "$pid" 2>/dev/null
+    local rc=$?
+    printf "\r\033[K"
+    printf "\033[?25h"
+    return $rc
+  else
+    wait "$pid" 2>/dev/null
+    return $?
+  fi
+}
+
+# Resolve the primary repo root regardless of which worktree cwd is in.
+# Uses --git-common-dir which always points at the primary .git, then walks
+# up one level to the repo root.
+resolve_primary_repo() {
+  local git_common
+  git_common="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
+  dirname "$git_common"
+}
+
+# Look up the on-disk path of a worktree by its branch name.
+# Prints nothing (and returns 0) if no match — callers must check for empty.
+lookup_worktree_path() {
+  local target_branch="$1"
+  git worktree list --porcelain | awk -v b="refs/heads/$target_branch" '
+    /^worktree / { path = substr($0, 10) }
+    /^branch /   { if ($2 == b) { print path; exit } }
+  '
+}
+
+# List all branches currently checked out in worktrees, one per line.
+# Detached worktrees are printed as "(detached HEAD)".
+list_worktree_branches() {
+  git worktree list --porcelain | awk '
+    /^branch / { sub(/^refs\/heads\//, "", $2); print $2; next }
+    /^detached/ { print "(detached HEAD)" }
+  '
 }
 
 show_help() {
@@ -102,7 +136,8 @@ show_help() {
   echo "                       Create worktree from base branch (default: main)"
   echo "                       Extra flags are passed to git worktree add"
   echo "  wt rm|remove <branch> [flags]"
-  echo "                       Remove worktree and delete branch"
+  echo "                       Remove worktree (keeps branch by default)"
+  echo "                       -D, --delete-branch  Also delete the branch"
   echo "                       Extra flags (e.g. --force) are passed to git worktree remove"
   echo "  wt ls|list [flags]    List all worktrees"
   echo "                       Extra flags are passed to git worktree list"
@@ -141,17 +176,39 @@ if [[ "$1" == "rm" || "$1" == "remove" ]]; then
   branch="${2:-}"
   [[ -z "$branch" ]] && show_help && exit 1
   shift 2
-  extra_flags=("$@")
-  slug="${branch//\//-}"
-  repo_root="$(git rev-parse --show-toplevel)"
-  repo_name="$(basename "$repo_root")"
-  wt_dir="$(cd "${repo_root}/.." && pwd)/${repo_name}-worktrees/${slug}"
-  info "Removing worktree ${BOLD}${slug}${NC}"
-  (git worktree remove ${extra_flags[@]+"${extra_flags[@]}"} "$wt_dir" && git branch -D "$branch" >/dev/null 2>&1) &
+  delete_branch=false
+  extra_flags=()
+  for arg in "$@"; do
+    case "$arg" in
+      -D|--delete-branch) delete_branch=true ;;
+      *) extra_flags+=("$arg") ;;
+    esac
+  done
+
+  wt_dir="$(lookup_worktree_path "$branch")"
+  if [[ -z "$wt_dir" ]]; then
+    err "No worktree found for branch ${BOLD}${branch}${NC}"
+    printf "    Existing worktrees:\n" >&2
+    list_worktree_branches | sed 's/^/      /' >&2
+    exit 1
+  fi
+
+  info "Removing worktree ${BOLD}${branch}${NC}"
+  err_file="$(mktemp -t wt-rm.XXXXXX)"
+  trap 'rm -f "$err_file"' EXIT
+
+  if [[ "$delete_branch" == true ]]; then
+    (git worktree remove ${extra_flags[@]+"${extra_flags[@]}"} "$wt_dir" 2>"$err_file" \
+      && git branch -D "$branch" >/dev/null 2>>"$err_file") &
+  else
+    git worktree remove ${extra_flags[@]+"${extra_flags[@]}"} "$wt_dir" 2>"$err_file" &
+  fi
   if spin $! "Removing worktree"; then
     log "Removed ${DIM}${wt_dir}${NC}"
+    [[ "$delete_branch" == true ]] && log "Deleted branch ${BOLD}${branch}${NC}"
   else
     err "Failed to remove worktree"
+    [[ -s "$err_file" ]] && sed 's/^/    /' "$err_file" >&2
     exit 1
   fi
   exit 0
@@ -172,18 +229,25 @@ else
 fi
 
 slug="${branch//\//-}"
-repo_root="$(git rev-parse --show-toplevel)"
+repo_root="$(resolve_primary_repo)"
 repo_name="$(basename "$repo_root")"
 wt_dir="$(cd "${repo_root}/.." && pwd)/${repo_name}-worktrees/${slug}"
 
 echo ""
-info "Creating worktree ${BOLD}${branch}${NC} from ${DIM}${base}${NC}"
-
-git worktree add -b "$branch" "$wt_dir" "$base" ${extra_flags[@]+"${extra_flags[@]}"} >/dev/null 2>&1 &
+err_file="$(mktemp -t wt-new.XXXXXX)"
+trap 'rm -f "$err_file"' EXIT
+if git show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
+  info "Checking out existing branch ${BOLD}${branch}${NC}"
+  git worktree add "$wt_dir" "$branch" ${extra_flags[@]+"${extra_flags[@]}"} 2>"$err_file" >/dev/null &
+else
+  info "Creating worktree ${BOLD}${branch}${NC} from ${DIM}${base}${NC}"
+  git worktree add -b "$branch" "$wt_dir" "$base" ${extra_flags[@]+"${extra_flags[@]}"} 2>"$err_file" >/dev/null &
+fi
 if spin $! "Creating worktree"; then
   log "Worktree created at ${DIM}${wt_dir}${NC}"
 else
   err "Failed to create worktree"
+  [[ -s "$err_file" ]] && sed 's/^/    /' "$err_file" >&2
   exit 1
 fi
 
