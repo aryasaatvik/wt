@@ -88,6 +88,10 @@ Edit `SYNC_EXCLUDE` in `bin/wt` to customize.
 - **Git hooks in worktrees**: `.git` in a worktree is a file (not a directory), so hook installers like `hk`, `husky`, or `lefthook` may fail. Guard the prepare script with `[ -f .git ]` to skip in worktrees.
 - **File sync is filesystem-based**: Uses `git ls-files --ignored` + rsync, not `git archive`. This is intentional since .env files are gitignored and have no committed version.
 
+## Agent Plugin
+
+The [wt-plugin](https://github.com/aryasaatvik/coding-agent-plugins/tree/main/plugins/wt) (Claude Code + OpenCode) nudges `git worktree add` toward `wt new`. When you need a raw `git worktree add` anyway (custom path, `--detach`, scripting), prefix the command with `WT_HOOK_OFF=1`.
+
 ## Completions
 
 Zsh completions are provided in `completions/wt.zsh`. They complete subcommands, flags, existing worktree branches (for `rm`), and local branches (for base branch argument).
