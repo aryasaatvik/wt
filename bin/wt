@@ -12,6 +12,7 @@
 #                                            Pass -D/--delete-branch to also delete the branch
 #   wt ls|list [flags]                       List all worktrees
 #   wt -h | --help                   Show this help
+#   wt --no-install                  Skip dependency install
 #   wt --verbose                     Verbose rsync output
 #
 # Worktree layout:
@@ -80,6 +81,19 @@ log()  { printf "  ${GREEN}✓${NC} %b\n" "$1"; }
 info() { printf "  ${CYAN}→${NC} %b\n" "$1"; }
 err()  { printf "  ${RED}✗${NC} %b\n" "$1" >&2; }
 
+has_dependency_config() {
+  local dir="$1"
+  [[ -f "$dir/bun.lock" ]] && return 0
+  [[ -f "$dir/bun.lockb" ]] && return 0
+  [[ -f "$dir/pnpm-lock.yaml" ]] && return 0
+  [[ -f "$dir/package-lock.json" ]] && return 0
+  [[ -f "$dir/npm-shrinkwrap.json" ]] && return 0
+  [[ -f "$dir/yarn.lock" ]] && return 0
+  [[ -f "$dir/deno.lock" ]] && return 0
+  [[ -f "$dir/package.json" ]] && grep -Eq '"packageManager"[[:space:]]*:' "$dir/package.json" && return 0
+  return 1
+}
+
 spin() {
   local pid=$1 msg=$2 frame=0
   if [[ -t 1 ]]; then
@@ -144,15 +158,18 @@ show_help() {
   echo ""
   printf "${BOLD}Options:${NC}\n"
   echo "  --verbose            Show detailed rsync output"
+  echo "  --no-install         Skip dependency install"
   echo "  -h, --help           Show this help"
 }
 
 # Parse --verbose flag
 VERBOSE=false
+INSTALL=true
 ARGS=()
 for arg in "$@"; do
   case "$arg" in
     --verbose) VERBOSE=true ;;
+    --no-install) INSTALL=false ;;
     *) ARGS+=("$arg") ;;
   esac
 done
@@ -217,14 +234,24 @@ fi
 # ── create ────────────────────────────────────────────────────
 if [[ "$1" == "new" || "$1" == "create" ]]; then
   branch="${2:-}"
-  base="${3:-main}"
   [[ -z "$branch" ]] && show_help && exit 1
-  shift; shift; [[ $# -gt 0 ]] && shift
+  shift 2
+  if [[ $# -gt 0 && "$1" != -* ]]; then
+    base="$1"
+    shift
+  else
+    base="main"
+  fi
   extra_flags=("$@")
 else
   branch="$1"
-  base="${2:-main}"
-  shift; [[ $# -gt 0 ]] && shift
+  shift
+  if [[ $# -gt 0 && "$1" != -* ]]; then
+    base="$1"
+    shift
+  else
+    base="main"
+  fi
   extra_flags=("$@")
 fi
 
@@ -272,7 +299,13 @@ spin $! "Syncing ${file_count} files"
 log "Synced ${BOLD}${file_count}${NC} files"
 
 # Install dependencies
-if command -v ni >/dev/null 2>&1; then
+if [[ "$INSTALL" == false ]]; then
+  info "Skipping install (--no-install)"
+elif ! command -v ni >/dev/null 2>&1; then
+  info "Skipping install (ni not found)"
+elif ! has_dependency_config "$wt_dir"; then
+  info "Skipping install (no lockfile or packageManager)"
+else
   info "Installing dependencies"
   echo ""
   (cd "$wt_dir" && ni) &
@@ -284,8 +317,6 @@ if command -v ni >/dev/null 2>&1; then
   else
     err "Dependency install failed (run manually in worktree)"
   fi
-else
-  info "Skipping install (ni not found)"
 fi
 
 echo ""

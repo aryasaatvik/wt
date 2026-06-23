@@ -39,6 +39,9 @@ wt create x/my-feature
 
 # From a specific base branch
 wt new x/my-feature develop
+
+# Skip dependency install
+wt new x/my-feature --no-install
 ```
 
 Creates worktree at `../<repo>-worktrees/<slug>/` where slashes in the branch name become dashes (e.g., `x/my-feature` → `x-my-feature`).
@@ -46,7 +49,7 @@ Creates worktree at `../<repo>-worktrees/<slug>/` where slashes in the branch na
 Steps performed:
 1. `git worktree add -b <branch> <path> <base>`
 2. Sync all gitignored files (env, scratchpad, editor config, etc.) via rsync
-3. Run `ni` to install dependencies (auto-detects package manager)
+3. Run `ni` to install dependencies when a lockfile or `packageManager` field identifies the package manager
 
 ### Remove
 
@@ -71,6 +74,7 @@ Wraps `git worktree list`.
 | Flag | Description |
 |------|-------------|
 | `--verbose` | Show detailed rsync file list during sync |
+| `--no-install` | Skip dependency install |
 | `-h`, `--help` | Show help |
 
 ## File Sync

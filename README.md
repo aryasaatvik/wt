@@ -6,7 +6,7 @@ Git worktree helper that creates worktrees with gitignored file sync and depende
 
 1. Creates a worktree in `../<repo>-worktrees/<slug>/`
 2. Syncs all gitignored files (`.env`, `.scratchpad`, editor config, etc.) from the source repo
-3. Installs dependencies via [`ni`](https://github.com/antfu/ni) (auto-detects package manager)
+3. Installs dependencies via [`ni`](https://github.com/antfu/ni) when a lockfile or `packageManager` field identifies the package manager
 
 ## Install
 
@@ -34,6 +34,7 @@ Requires: `git`, `rsync`, [`ni`](https://github.com/antfu/ni).
 ```bash
 wt x/my-feature           # create worktree from main
 wt new x/my-feature dev   # create from a specific base branch
+wt new x/my-feature --no-install
 wt rm x/my-feature        # remove worktree and delete branch
 wt ls                     # list all worktrees
 wt --verbose x/feature    # show rsync file list
