@@ -82,6 +82,7 @@ Wraps `git worktree list`.
 The sync step copies all gitignored files from the source repo to the worktree, **excluding** heavy artifacts defined in the `SYNC_EXCLUDE` array in the script:
 
 - **JS/TS**: `node_modules`, `.next`, `.turbo`, `dist`, `.vercel`, `.cache`
+- **Infra**: `.sst`
 - **Xcode/Swift**: `build`, `.build`, `DerivedData`, `Pods`, `Carthage`, `xcuserdata`
 - **Misc**: `.wrangler`
 

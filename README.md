@@ -56,6 +56,7 @@ Branch slashes are converted to dashes for the directory name.
 All gitignored files are synced except heavy artifacts:
 
 - **JS/TS**: `node_modules`, `.next`, `.turbo`, `dist`, `.vercel`, `.cache`
+- **Infra**: `.sst`
 - **Xcode/Swift**: `build`, `.build`, `DerivedData`, `Pods`, `Carthage`, `xcuserdata`
 - **Misc**: `.wrangler`
 

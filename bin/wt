@@ -71,6 +71,8 @@ SPINNER=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
 SYNC_EXCLUDE=(
   # JS/TS
   node_modules .next .turbo dist .vercel .cache
+  # Infra
+  .sst
   # Xcode/Swift
   build .build DerivedData Pods Carthage xcuserdata
   # Misc
