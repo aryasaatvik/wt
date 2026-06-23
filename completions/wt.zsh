@@ -5,8 +5,8 @@ _wt() {
   local -a subcommands=(
     'new:Create worktree from base branch'
     'create:Create worktree from base branch'
-    'rm:Remove worktree and delete branch'
-    'remove:Remove worktree and delete branch'
+    'rm:Remove worktree'
+    'remove:Remove worktree'
     'ls:List all worktrees'
     'list:List all worktrees'
   )

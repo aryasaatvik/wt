@@ -35,7 +35,8 @@ Requires: `git`, `rsync`, [`ni`](https://github.com/antfu/ni).
 wt x/my-feature           # create worktree from main
 wt new x/my-feature dev   # create from a specific base branch
 wt new x/my-feature --no-install
-wt rm x/my-feature        # remove worktree and delete branch
+wt rm x/my-feature        # remove worktree and keep branch
+wt rm x/my-feature -D     # remove worktree and delete branch
 wt ls                     # list all worktrees
 wt --verbose x/feature    # show rsync file list
 ```

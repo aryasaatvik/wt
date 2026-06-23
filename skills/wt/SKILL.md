@@ -56,9 +56,10 @@ Steps performed:
 ```bash
 wt rm x/my-feature
 wt remove x/my-feature
+wt rm x/my-feature -D
 ```
 
-Runs `git worktree remove` and `git branch -D`.
+Runs `git worktree remove`. Pass `-D` or `--delete-branch` to also delete the branch.
 
 ### List
 
