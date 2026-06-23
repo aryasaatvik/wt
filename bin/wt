@@ -83,6 +83,29 @@ log()  { printf "  ${GREEN}✓${NC} %b\n" "$1"; }
 info() { printf "  ${CYAN}→${NC} %b\n" "$1"; }
 err()  { printf "  ${RED}✗${NC} %b\n" "$1" >&2; }
 
+TEMP_FILES=()
+
+cleanup() {
+  if [[ ${#TEMP_FILES[@]} -gt 0 ]]; then
+    rm -f "${TEMP_FILES[@]}"
+  fi
+}
+trap cleanup EXIT
+
+make_temp_file() {
+  local path
+  path="$(mktemp -t "$1.XXXXXX")"
+  TEMP_FILES+=("$path")
+  printf "%s\n" "$path"
+}
+
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    err "Required command not found: ${BOLD}$1${NC}"
+    exit 1
+  fi
+}
+
 has_dependency_config() {
   local dir="$1"
   [[ -f "$dir/bun.lock" ]] && return 0
@@ -94,6 +117,19 @@ has_dependency_config() {
   [[ -f "$dir/deno.lock" ]] && return 0
   [[ -f "$dir/package.json" ]] && grep -Eq '"packageManager"[[:space:]]*:' "$dir/package.json" && return 0
   return 1
+}
+
+regex_escape() {
+  sed 's/[][(){}.^$*+?|\\]/\\&/g' <<<"$1"
+}
+
+build_exclude_pattern() {
+  local item escaped pattern=""
+  for item in "${SYNC_EXCLUDE[@]}"; do
+    escaped="$(regex_escape "$item")"
+    pattern="${pattern}|(${escaped})"
+  done
+  printf "(^|/)(%s)(/|$)" "${pattern:1}"
 }
 
 spin() {
@@ -115,6 +151,8 @@ spin() {
     return $?
   fi
 }
+
+require_command git
 
 # Resolve the primary repo root regardless of which worktree cwd is in.
 # Uses --git-common-dir which always points at the primary .git, then walks
@@ -213,8 +251,7 @@ if [[ "$1" == "rm" || "$1" == "remove" ]]; then
   fi
 
   info "Removing worktree ${BOLD}${branch}${NC}"
-  err_file="$(mktemp -t wt-rm.XXXXXX)"
-  trap 'rm -f "$err_file"' EXIT
+  err_file="$(make_temp_file wt-rm)"
 
   if [[ "$delete_branch" == true ]]; then
     (git worktree remove ${extra_flags[@]+"${extra_flags[@]}"} "$wt_dir" 2>"$err_file" \
@@ -263,8 +300,8 @@ repo_name="$(basename "$repo_root")"
 wt_dir="$(cd "${repo_root}/.." && pwd)/${repo_name}-worktrees/${slug}"
 
 echo ""
-err_file="$(mktemp -t wt-new.XXXXXX)"
-trap 'rm -f "$err_file"' EXIT
+mkdir -p "$(dirname "$wt_dir")"
+err_file="$(make_temp_file wt-new)"
 if git show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
   info "Checking out existing branch ${BOLD}${branch}${NC}"
   git worktree add "$wt_dir" "$branch" ${extra_flags[@]+"${extra_flags[@]}"} 2>"$err_file" >/dev/null &
@@ -282,21 +319,22 @@ fi
 
 # Sync gitignored files that are also ignored in the worktree
 info "Syncing gitignored files"
-exclude_pattern=$(printf "|(%s)" "${SYNC_EXCLUDE[@]}")
-exclude_pattern="(^|/)(${exclude_pattern:1})/"
+require_command rsync
+exclude_pattern="$(build_exclude_pattern)"
 
 rsync_flags="-a"
 [[ "$VERBOSE" == true ]] && rsync_flags="-av"
+rsync_err_file="$(make_temp_file wt-rsync)"
 
 # Get ignored files from source, filter out heavy artifacts,
 # then keep only files that are also ignored by the worktree's gitignore
 sync_files=$(git -C "$repo_root" ls-files --others --ignored --exclude-standard \
   | grep -Ev "$exclude_pattern" \
   | git -C "$wt_dir" check-ignore --stdin 2>/dev/null || true)
-file_count=$(echo "$sync_files" | grep -c . || true)
+file_count=$(printf "%s\n" "$sync_files" | grep -c . || true)
 
 (echo "$sync_files" \
-  | rsync $rsync_flags --files-from=- "$repo_root/" "$wt_dir/" >/dev/null 2>&1 || true) &
+  | rsync $rsync_flags --files-from=- "$repo_root/" "$wt_dir/" >/dev/null 2>"$rsync_err_file" || true) &
 spin $! "Syncing ${file_count} files"
 log "Synced ${BOLD}${file_count}${NC} files"
 
