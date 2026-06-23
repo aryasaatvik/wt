@@ -88,6 +88,8 @@ The sync step copies all gitignored files from the source repo to the worktree, 
 
 Edit `SYNC_EXCLUDE` in `bin/wt` to customize.
 
+If file sync fails, `wt` exits nonzero and prints the captured `rsync` error output.
+
 ## Known Gotchas
 
 - **Git hooks in worktrees**: `.git` in a worktree is a file (not a directory), so hook installers like `hk`, `husky`, or `lefthook` may fail. Guard the prepare script with `[ -f .git ]` to skip in worktrees.

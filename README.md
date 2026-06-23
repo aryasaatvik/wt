@@ -62,6 +62,8 @@ All gitignored files are synced except heavy artifacts:
 
 Edit the `SYNC_EXCLUDE` array in `bin/wt` to customize.
 
+If file sync fails, `wt` exits nonzero and prints the captured `rsync` error output.
+
 ## Agent integration
 
 A companion plugin nudges AI coding agents (Claude Code and OpenCode) to reach for `wt` instead of raw `git worktree add`, so agent-created worktrees also get gitignored files synced and dependencies installed:

@@ -333,10 +333,19 @@ sync_files=$(git -C "$repo_root" ls-files --others --ignored --exclude-standard 
   | git -C "$wt_dir" check-ignore --stdin 2>/dev/null || true)
 file_count=$(printf "%s\n" "$sync_files" | grep -c . || true)
 
-(echo "$sync_files" \
-  | rsync $rsync_flags --files-from=- "$repo_root/" "$wt_dir/" >/dev/null 2>"$rsync_err_file" || true) &
-spin $! "Syncing ${file_count} files"
-log "Synced ${BOLD}${file_count}${NC} files"
+if [[ "$file_count" -eq 0 ]]; then
+  log "No gitignored files to sync"
+else
+  (printf "%s\n" "$sync_files" \
+    | rsync $rsync_flags --files-from=- "$repo_root/" "$wt_dir/" >/dev/null 2>"$rsync_err_file") &
+  if spin $! "Syncing ${file_count} files"; then
+    log "Synced ${BOLD}${file_count}${NC} files"
+  else
+    err "Failed to sync gitignored files"
+    [[ -s "$rsync_err_file" ]] && sed 's/^/    /' "$rsync_err_file" >&2
+    exit 1
+  fi
+fi
 
 # Install dependencies
 if [[ "$INSTALL" == false ]]; then
