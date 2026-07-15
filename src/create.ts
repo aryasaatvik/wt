@@ -39,9 +39,9 @@ function hasDependencyConfig(dir: string): boolean {
   }
 }
 
-/** Absolute path of the worktree's private git dir (<primary>/.git/worktrees/<name>). */
-function worktreeGitDir(wtDir: string): string {
-  return run(["git", "-C", wtDir, "rev-parse", "--absolute-git-dir"]).trim();
+/** Absolute path of the worktree's private git dir (<primary>/.git/worktrees/<name>), or null on git failure. */
+function worktreeGitDir(wtDir: string): string | null {
+  return run(["git", "-C", wtDir, "rev-parse", "--absolute-git-dir"]).trim() || null;
 }
 
 export interface ProvenanceMarker {
@@ -52,7 +52,9 @@ export interface ProvenanceMarker {
 }
 
 export function readProvenance(wtDir: string): ProvenanceMarker | null {
-  const markerPath = join(worktreeGitDir(wtDir), "wt.json");
+  const gitDir = worktreeGitDir(wtDir);
+  if (!gitDir) return null;
+  const markerPath = join(gitDir, "wt.json");
   if (!existsSync(markerPath)) return null;
   try {
     return JSON.parse(readFileSync(markerPath, "utf8")) as ProvenanceMarker;
@@ -113,12 +115,19 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
     base: existing ? null : base,
     syncedFiles: synced,
   };
-  try {
-    writeFileSync(join(worktreeGitDir(wtDir), "wt.json"), JSON.stringify(marker, null, 2) + "\n");
-  } catch (e) {
-    // The marker is advisory (consumers fall back to walking the worktree),
-    // so a failed write must not fail an otherwise-complete creation.
-    info(`Skipping provenance marker (${e instanceof Error ? e.message : e})`);
+  // The marker is advisory (consumers fall back to walking the worktree), so
+  // neither an unresolvable git dir nor a failed write may fail an
+  // otherwise-complete creation — and an empty git dir must never turn the
+  // write into a stray CWD-relative wt.json.
+  const gitDir = worktreeGitDir(wtDir);
+  if (gitDir) {
+    try {
+      writeFileSync(join(gitDir, "wt.json"), JSON.stringify(marker, null, 2) + "\n");
+    } catch (e) {
+      info(`Skipping provenance marker (${e instanceof Error ? e.message : e})`);
+    }
+  } else {
+    info("Skipping provenance marker (could not resolve the worktree's git dir)");
   }
 
   if (!opts.install) {
