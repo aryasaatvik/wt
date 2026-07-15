@@ -41,6 +41,14 @@ export interface ScanOptions {
   concurrency?: number;
 }
 
+export interface PrListing {
+  prs: PrInfo[];
+  /** false when the listing may be truncated by the fetch limit */
+  complete: boolean;
+}
+
+const PR_LIST_LIMIT = 1000;
+
 /**
  * One repo-level `gh pr list` maps branches to PR state. Returns null when gh
  * is missing, unauthenticated, offline, or slow — the scan must never block
@@ -50,18 +58,19 @@ export async function fetchPrs(
   repoRoot: string,
   env: Record<string, string | undefined> = process.env,
   timeoutMs = 8000,
-): Promise<PrInfo[] | null> {
+): Promise<PrListing | null> {
   if (!Bun.which("gh", { PATH: env.PATH ?? "" })) return null;
   try {
     const p = Bun.spawn(
-      ["gh", "pr", "list", "--state", "all", "--limit", "200", "--json", "headRefName,state,number"],
+      ["gh", "pr", "list", "--state", "all", "--limit", String(PR_LIST_LIMIT), "--json", "headRefName,state,number"],
       { cwd: repoRoot, env: env as Record<string, string>, stdout: "pipe", stderr: "ignore" },
     );
     const timer = setTimeout(() => p.kill(), timeoutMs);
     const [stdout, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
     clearTimeout(timer);
     if (code !== 0) return null;
-    return JSON.parse(stdout) as PrInfo[];
+    const prs = JSON.parse(stdout) as PrInfo[];
+    return { prs, complete: prs.length < PR_LIST_LIMIT };
   } catch {
     return null;
   }
@@ -70,12 +79,15 @@ export async function fetchPrs(
 /** Newest PR wins when a branch has several (gh lists newest-first). */
 export function prStateFor(
   branch: string | null,
-  prs: PrInfo[] | null,
+  listing: PrListing | null,
 ): { prState: PrState; prNumber: number | null } {
-  if (prs === null) return { prState: "unknown", prNumber: null };
+  if (listing === null) return { prState: "unknown", prNumber: null };
   if (!branch) return { prState: "none", prNumber: null };
-  const pr = prs.find((p) => p.headRefName === branch);
-  if (!pr) return { prState: "none", prNumber: null };
+  const pr = listing.prs.find((p) => p.headRefName === branch);
+  if (!pr) {
+    // a miss in a truncated listing proves nothing — don't claim "no PR"
+    return { prState: listing.complete ? "none" : "unknown", prNumber: null };
+  }
   const state = pr.state.toLowerCase();
   const prState: PrState =
     state === "open" || state === "merged" || state === "closed" ? state : "unknown";
@@ -146,6 +158,6 @@ export async function scanWorktrees(cwd: string, opts: ScanOptions = {}): Promis
   const probed = await pool(worktrees, opts.concurrency ?? 10, (w) =>
     probe(w, repoRoot, defaultBranch),
   );
-  const prs = await prsPromise;
-  return probed.map((r) => ({ ...r, ...prStateFor(r.branch, prs) }));
+  const listing = await prsPromise;
+  return probed.map((r) => ({ ...r, ...prStateFor(r.branch, listing) }));
 }

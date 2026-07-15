@@ -1,6 +1,6 @@
 // wt ls — status table, --json, and --all fleet discovery.
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { scanWorktrees, type ScanOptions, type WorktreeStatus } from "./scan.ts";
 import { bold, cyan, dim, gray, green, pad, pool, red, yellow } from "./term.ts";
@@ -35,8 +35,8 @@ function dirtyLabel(r: WorktreeStatus): string {
 }
 
 function aheadBehindLabel(r: WorktreeStatus): string {
-  if (r.ahead === null && r.behind === null) return "-";
-  return `+${r.ahead ?? 0}/-${r.behind ?? 0}`;
+  if (r.ahead === null || r.behind === null) return "-";
+  return `+${r.ahead}/-${r.behind}`;
 }
 
 function prLabel(r: WorktreeStatus): string {
@@ -108,7 +108,8 @@ export function discoverPrimaries(root: string, depth = 3): string[] {
       }
       if (remaining > 1) {
         try {
-          if (statSync(full).isDirectory()) walk(full, remaining - 1);
+          // lstat: never follow symlinks out of the dev root during the sweep
+          if (lstatSync(full).isDirectory()) walk(full, remaining - 1);
         } catch {
           // unreadable entry — skip
         }

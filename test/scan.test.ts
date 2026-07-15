@@ -9,17 +9,26 @@ describe("prStateFor", () => {
     { headRefName: "feat/b", state: "MERGED", number: 8 },
     { headRefName: "feat/c", state: "CLOSED", number: 5 },
   ];
+  const listing = { prs, complete: true };
 
   test("maps gh states and misses", () => {
-    expect(prStateFor("feat/a", prs)).toEqual({ prState: "open", prNumber: 12 });
-    expect(prStateFor("feat/b", prs)).toEqual({ prState: "merged", prNumber: 8 });
-    expect(prStateFor("feat/c", prs)).toEqual({ prState: "closed", prNumber: 5 });
-    expect(prStateFor("feat/none", prs)).toEqual({ prState: "none", prNumber: null });
-    expect(prStateFor(null, prs)).toEqual({ prState: "none", prNumber: null });
+    expect(prStateFor("feat/a", listing)).toEqual({ prState: "open", prNumber: 12 });
+    expect(prStateFor("feat/b", listing)).toEqual({ prState: "merged", prNumber: 8 });
+    expect(prStateFor("feat/c", listing)).toEqual({ prState: "closed", prNumber: 5 });
+    expect(prStateFor("feat/none", listing)).toEqual({ prState: "none", prNumber: null });
+    expect(prStateFor(null, listing)).toEqual({ prState: "none", prNumber: null });
   });
 
   test("degrades to unknown when gh data is unavailable", () => {
     expect(prStateFor("feat/a", null)).toEqual({ prState: "unknown", prNumber: null });
+  });
+
+  test("a miss in a truncated listing is unknown, not none", () => {
+    expect(prStateFor("feat/none", { prs, complete: false })).toEqual({
+      prState: "unknown",
+      prNumber: null,
+    });
+    expect(prStateFor("feat/a", { prs, complete: false })).toEqual({ prState: "open", prNumber: 12 });
   });
 });
 
