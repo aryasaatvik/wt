@@ -137,7 +137,14 @@ export async function runSafetyPipeline(
       const priContent = readIfExists(priFile);
       if (priContent === wtContent) continue;
       if (priContent !== null) {
-        const wtNewer = statSync(wtFile).mtimeMs > statSync(priFile).mtimeMs;
+        let wtNewer: boolean;
+        try {
+          wtNewer = statSync(wtFile).mtimeMs > statSync(priFile).mtimeMs;
+        } catch {
+          // a file vanished between read and stat — flag it, never crash the run
+          flags.push({ kind: "scratchpad-conflict", detail: `.scratchpad/${rel} changed while checking — retry` });
+          continue;
+        }
         if (wtNewer) {
           flags.push({ kind: "scratchpad-conflict", detail: `.scratchpad/${rel} is newer than primary's copy` });
           continue;

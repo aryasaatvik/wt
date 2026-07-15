@@ -39,7 +39,9 @@ export async function classifyWorktree(wtPath: string): Promise<Verdict> {
   if (!defaultBranch) return { kind: "NO_REMOTE_REF", ref: null };
   const defRef = `origin/${defaultBranch}`;
 
-  const head = (await g("rev-parse", "HEAD")).stdout.trim();
+  const headRes = await g("rev-parse", "HEAD");
+  const head = headRes.stdout.trim();
+  if (!headRes.ok || !head) return { kind: "PROBE_FAILED", ref: defRef };
 
   if ((await g("merge-base", "--is-ancestor", head, defRef)).ok) {
     return { kind: "REACHABLE", ref: defRef };
