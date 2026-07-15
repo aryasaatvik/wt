@@ -65,6 +65,18 @@ describe("cmdRm", () => {
     }
   });
 
+  test("-D on a detached worktree fails BEFORE removing anything", async () => {
+    const repo = makeRepo();
+    try {
+      const head = repo.git("rev-parse", "HEAD").trim();
+      const wt = repo.addWorktree("lane-detached", { detachAt: head });
+      await expect(cmdRm("lane-detached", { deleteBranch: true, cwd: repo.dir })).rejects.toThrow();
+      expect(existsSync(wt)).toBe(true);
+    } finally {
+      repo.rm();
+    }
+  });
+
   test("errors clearly on unknown target", async () => {
     const repo = makeRepo();
     try {

@@ -69,6 +69,12 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
     throw new ExitError(1);
   }
 
+  // -D on a detached worktree can never succeed — fail before removing anything.
+  if (opts.deleteBranch && !wt.branch) {
+    err(`Cannot delete branch: ${bold(target)} is a detached worktree (drop -D to remove it)`);
+    throw new ExitError(1);
+  }
+
   info(`Removing worktree ${bold(target)}`);
   const removed = await runAsync(["git", "-C", opts.cwd, "worktree", "remove", wt.path]);
   if (!removed.ok) {
@@ -78,11 +84,7 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
   }
   log(`Removed ${dim(wt.path)}`);
 
-  if (opts.deleteBranch) {
-    if (!wt.branch) {
-      err(`Cannot delete branch: ${bold(target)} was a detached worktree`);
-      throw new ExitError(1);
-    }
+  if (opts.deleteBranch && wt.branch) {
     const deleted = await runAsync(["git", "-C", opts.cwd, "branch", "-D", wt.branch]);
     if (!deleted.ok) {
       err(`Failed to delete branch ${bold(wt.branch)}`);
