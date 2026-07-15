@@ -204,7 +204,9 @@ export function renderReapReport(entries: ReapEntry[], apply: boolean, applied?:
         lines.push(
           `  ${color[disposition](label[disposition].padEnd(labelWidth))}  ${e.record.slug.padEnd(30)} ${size.padStart(6)}  ${dim(e.reasons.join("; "))}`,
         );
-        if (e.safety && e.safety.salvaged.length > 0) {
+        // salvage notices only on removal rows: a SKIP/KEEP lane was never
+        // touched, and implying its notes were archived invites data loss
+        if (disposition === "remove" && e.safety && e.safety.salvaged.length > 0) {
           lines.push(`  ${" ".repeat(labelWidth)}  ${dim(`salvage: ${e.safety.salvaged.join(", ")}`)}`);
         }
       }
