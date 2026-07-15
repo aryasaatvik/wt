@@ -113,7 +113,13 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
     base: existing ? null : base,
     syncedFiles: synced,
   };
-  writeFileSync(join(worktreeGitDir(wtDir), "wt.json"), JSON.stringify(marker, null, 2) + "\n");
+  try {
+    writeFileSync(join(worktreeGitDir(wtDir), "wt.json"), JSON.stringify(marker, null, 2) + "\n");
+  } catch (e) {
+    // The marker is advisory (consumers fall back to walking the worktree),
+    // so a failed write must not fail an otherwise-complete creation.
+    info(`Skipping provenance marker (${e instanceof Error ? e.message : e})`);
+  }
 
   if (!opts.install) {
     info("Skipping install (--no-install)");
