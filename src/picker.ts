@@ -126,7 +126,7 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     }
     while (rowTexts.length > Math.max(records.length, 1)) {
       const tr = rowTexts.pop()!;
-      scroll.content.remove(tr);
+      scroll.remove(tr);
       tr.destroy();
     }
     if (records.length) {
@@ -156,13 +156,19 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     busy = true;
     status = "scanning…";
     paint();
-    let rs: LsRecord[] = await scanWorktrees(repoRoot);
-    if (showVerdicts) rs = await withVerdicts(rs);
-    records = rs;
-    selectedIndex = records.length ? Math.min(idx, records.length - 1) : 0;
-    busy = false;
-    status = "";
-    paint();
+    try {
+      let rs: LsRecord[] = await scanWorktrees(repoRoot);
+      if (showVerdicts) rs = await withVerdicts(rs);
+      records = rs;
+      selectedIndex = records.length ? Math.min(idx, records.length - 1) : 0;
+      status = "";
+    } catch (e) {
+      // busy must never stay stuck — that would silently freeze every key
+      status = `scan failed: ${e instanceof Error ? e.message : e}`;
+    } finally {
+      busy = false;
+      paint();
+    }
   }
 
   function quit(printPath?: string): never {
@@ -176,25 +182,30 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     busy = true;
     status = `checking ${r.slug}…`;
     paint();
-    const safety = await runSafetyPipeline(r.path, repoRoot);
-    if (!safety.ok) {
-      const first = safety.flags[0]!;
-      const more = safety.flags.length > 1 ? ` (+${safety.flags.length - 1} more)` : "";
-      busy = false;
-      status = `skipped ${r.slug}: [${first.kind}] ${first.detail}${more}`;
-      paint();
+    try {
+      const safety = await runSafetyPipeline(r.path, repoRoot);
+      if (!safety.ok) {
+        const first = safety.flags[0]!;
+        const more = safety.flags.length > 1 ? ` (+${safety.flags.length - 1} more)` : "";
+        status = `skipped ${r.slug}: [${first.kind}] ${first.detail}${more}`;
+        return;
+      }
+      const rm = await runAsync(["git", "-C", repoRoot, "worktree", "remove", r.path]);
+      if (!rm.ok) {
+        status = `failed: ${rm.stderr.trim().split("\n")[0] ?? "git worktree remove error"}`;
+        return;
+      }
+      const salvage = safety.salvaged.length ? ` · salvaged ${safety.salvaged.length} note(s)` : "";
+      status = `removed ${r.slug}${salvage}`;
+      await refresh();
       return;
-    }
-    const rm = await runAsync(["git", "-C", repoRoot, "worktree", "remove", r.path]);
-    if (!rm.ok) {
+    } catch (e) {
+      // busy must never stay stuck — that would silently freeze every key
+      status = `error: ${e instanceof Error ? e.message : e}`;
+    } finally {
       busy = false;
-      status = `failed: ${rm.stderr.trim().split("\n")[0] ?? "git worktree remove error"}`;
       paint();
-      return;
     }
-    const salvage = safety.salvaged.length ? ` · salvaged ${safety.salvaged.length} note(s)` : "";
-    status = `removed ${r.slug}${salvage}`;
-    await refresh();
   }
 
   renderer.keyInput.on("keypress", (key) => {

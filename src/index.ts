@@ -24,8 +24,9 @@ ${bold("Commands:")}
                        -D, --delete-branch  Also delete the branch
                        Refuses dirty worktrees; wt never uses --force
   wt ls|list [flags]    Status table: branch, dirty, ahead/behind, PR, size, age
-                       Interactive picker on a TTY (--plain for the table)
+                       Interactive picker on a TTY
                        -v, --verdicts  append reachability verdicts
+                       --plain  force the table even on a TTY
                        --json   machine-readable records
                        --all    scan every <repo>-worktrees dir under ~/Developer
   wt reap [flags]       Report reapable worktrees (dry run by default)
