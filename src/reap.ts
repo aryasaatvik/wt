@@ -60,14 +60,27 @@ async function planRepo(repoRoot: string, opts: ReapOptions): Promise<ReapEntry[
       if (!AUTO_REMOVABLE.has(verdict.kind)) {
         return { ...base, verdict, verdictText, disposition: "keep", reasons: [verdictText] };
       }
-      if (cutoffMs !== null && record.lastCommitAt && Date.parse(record.lastCommitAt) > cutoffMs) {
-        return {
-          ...base,
-          verdict,
-          verdictText,
-          disposition: "keep",
-          reasons: [`last commit newer than ${opts.olderThanDays}d`],
-        };
+      if (cutoffMs !== null) {
+        const lastCommitMs = record.lastCommitAt ? Date.parse(record.lastCommitAt) : Number.NaN;
+        if (Number.isNaN(lastCommitMs)) {
+          // The user asked for old lanes only; unknowable age keeps the lane.
+          return {
+            ...base,
+            verdict,
+            verdictText,
+            disposition: "keep",
+            reasons: ["age unknown — keeping (--older-than set)"],
+          };
+        }
+        if (lastCommitMs > cutoffMs) {
+          return {
+            ...base,
+            verdict,
+            verdictText,
+            disposition: "keep",
+            reasons: [`last commit newer than ${opts.olderThanDays}d`],
+          };
+        }
       }
       // dry-run safety evaluation — accurate SKIP prediction, no salvage copies yet
       const safety = await runSafetyPipeline(record.path, repoRoot, { dryRun: true });
