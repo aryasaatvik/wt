@@ -126,6 +126,13 @@ export async function applyReap(entries: ReapEntry[]): Promise<ApplyResult> {
       skipped.push({ entry, reason: "HEAD moved since scan" });
       continue;
     }
+    // Re-evaluate read-only first: if something changed since the plan
+    // (a note edited, a file touched), skip WITHOUT having copied anything.
+    const recheck = await runSafetyPipeline(record.path, repoRoot, { dryRun: true });
+    if (!recheck.ok) {
+      skipped.push({ entry, reason: recheck.flags.map((f) => `[${f.kind}] ${f.detail}`).join("; ") });
+      continue;
+    }
     const safety = await runSafetyPipeline(record.path, repoRoot);
     if (!safety.ok) {
       skipped.push({ entry, reason: safety.flags.map((f) => `[${f.kind}] ${f.detail}`).join("; ") });

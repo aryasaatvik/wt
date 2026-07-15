@@ -12,7 +12,8 @@ export type VerdictKind =
   | "CONTENT_LANDED" // squash-merge signature: every touched file byte-identical in origin default
   | "STRANDED" // lane content differs from origin
   | "NO_REMOTE_REF" // no origin default branch to compare against
-  | "NO_MERGE_BASE"; // unrelated histories
+  | "NO_MERGE_BASE" // unrelated histories
+  | "PROBE_FAILED"; // a git probe errored — never classify optimistically
 
 export interface Verdict {
   kind: VerdictKind;
@@ -54,11 +55,14 @@ export async function classifyWorktree(wtPath: string): Promise<Verdict> {
   if (!mbRes.ok) return { kind: "NO_MERGE_BASE", ref: defRef };
   const mergeBase = mbRes.stdout.trim();
 
+  // A failed diff must never read as EMPTY/CONTENT_LANDED — both auto-remove.
   const filesRes = await g("diff", "--name-only", mergeBase, head);
+  if (!filesRes.ok) return { kind: "PROBE_FAILED", ref: defRef };
   const files = filesRes.stdout.split("\n").filter(Boolean);
   if (files.length === 0) return { kind: "EMPTY", ref: defRef };
 
   const differsRes = await g("diff", "--name-only", head, defRef, "--", ...files);
+  if (!differsRes.ok) return { kind: "PROBE_FAILED", ref: defRef };
   const differing = differsRes.stdout.split("\n").filter(Boolean).length;
   if (differing === 0) return { kind: "CONTENT_LANDED", ref: defRef, total: files.length };
   return { kind: "STRANDED", ref: defRef, differing, total: files.length };

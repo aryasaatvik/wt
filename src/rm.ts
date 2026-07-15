@@ -57,7 +57,7 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
     throw new ExitError(1);
   }
 
-  if (opts.expectHead && !wt.head.startsWith(opts.expectHead) && !opts.expectHead.startsWith(wt.head)) {
+  if (opts.expectHead && !wt.head.startsWith(opts.expectHead)) {
     err(`HEAD of ${bold(target)} moved since it was inspected — not removing`);
     detail(`expected ${opts.expectHead}, found ${wt.head}`);
     throw new ExitError(1);
