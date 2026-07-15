@@ -163,15 +163,30 @@ export async function applyReap(entries: ReapEntry[]): Promise<ApplyResult> {
 }
 
 export function renderReapReport(entries: ReapEntry[], apply: boolean, applied?: ApplyResult): string {
+  // After --apply, rows reflect what actually happened: a planned removal
+  // that apply skipped (TOCTOU, late safety flag) must not read as REMOVE.
+  const removedPaths = new Set(applied?.removed.map((e) => e.record.path));
+  const applySkipReasons = new Map(applied?.skipped.map((s) => [s.entry.record.path, s.reason]));
+  const effective = entries.map((e) => {
+    if (applied && e.disposition === "remove" && !removedPaths.has(e.record.path)) {
+      return {
+        ...e,
+        disposition: "skip" as Disposition,
+        reasons: [applySkipReasons.get(e.record.path) ?? "skipped at apply time"],
+      };
+    }
+    return e;
+  });
+
   const byRepo = new Map<string, ReapEntry[]>();
-  for (const e of entries) {
+  for (const e of effective) {
     const list = byRepo.get(e.repoRoot) ?? [];
     list.push(e);
     byRepo.set(e.repoRoot, list);
   }
   const lines: string[] = [];
   const label: Record<Disposition, string> = {
-    remove: apply ? "REMOVE" : "WOULD REMOVE",
+    remove: apply ? "REMOVED" : "WOULD REMOVE",
     skip: "SKIP",
     keep: "KEEP",
   };
@@ -180,16 +195,17 @@ export function renderReapReport(entries: ReapEntry[], apply: boolean, applied?:
     skip: yellow,
     keep: gray,
   };
+  const labelWidth = apply ? 7 : 12;
   for (const [repoRoot, repoEntries] of byRepo) {
     lines.push(`${bold(basename(repoRoot))} ${gray(dirname(repoRoot))}`);
     for (const disposition of ["remove", "skip", "keep"] as const) {
       for (const e of repoEntries.filter((x) => x.disposition === disposition)) {
         const size = humanSize(e.record.sizeKb);
         lines.push(
-          `  ${color[disposition](label[disposition].padEnd(apply ? 6 : 12))}  ${e.record.slug.padEnd(30)} ${size.padStart(6)}  ${dim(e.reasons.join("; "))}`,
+          `  ${color[disposition](label[disposition].padEnd(labelWidth))}  ${e.record.slug.padEnd(30)} ${size.padStart(6)}  ${dim(e.reasons.join("; "))}`,
         );
         if (e.safety && e.safety.salvaged.length > 0) {
-          lines.push(`  ${" ".repeat(apply ? 6 : 12)}  ${dim(`salvage: ${e.safety.salvaged.join(", ")}`)}`);
+          lines.push(`  ${" ".repeat(labelWidth)}  ${dim(`salvage: ${e.safety.salvaged.join(", ")}`)}`);
         }
       }
     }

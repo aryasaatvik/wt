@@ -93,6 +93,11 @@ describe("wt reap", () => {
       expect(applied.removed).toEqual([]);
       expect(applied.skipped[0]?.reason).toContain("HEAD moved");
       expect(existsSync(lane)).toBe(true);
+
+      // the report reflects the apply-time outcome, not the stale plan
+      const report = renderReapReport(entries, true, applied);
+      expect(report).not.toMatch(/REMOVED\s+lane-toctou/);
+      expect(report).toMatch(/SKIP\s+lane-toctou/);
     } finally {
       repo.rm();
     }
