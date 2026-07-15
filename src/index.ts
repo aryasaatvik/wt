@@ -5,8 +5,9 @@
 // config) from the source repo, and installs dependencies via `ni`.
 
 import { cmdNew } from "./create.ts";
+import { cmdLs } from "./ls.ts";
 import { cmdRm } from "./rm.ts";
-import { bold } from "./term.ts";
+import { bold, spinner } from "./term.ts";
 import { err, ExitError } from "./ui.ts";
 
 const HELP = `${bold("Usage:")} wt <command> [args]
@@ -22,8 +23,9 @@ ${bold("Commands:")}
                        detached worktrees are addressed by dir name or path
                        -D, --delete-branch  Also delete the branch
                        Refuses dirty worktrees; wt never uses --force
-  wt ls|list [flags]    List all worktrees
-                       Extra flags are passed to git worktree list
+  wt ls|list [flags]    Status table: branch, dirty, ahead/behind, PR, size, age
+                       --json   machine-readable records
+                       --all    scan every <repo>-worktrees dir under ~/Developer
 
 ${bold("Options:")}
   --verbose            Show detailed rsync output
@@ -48,11 +50,26 @@ const cwd = process.cwd();
 const command = args[0]!;
 
 if (command === "ls" || command === "list") {
-  const p = Bun.spawn(["git", "worktree", "list", ...args.slice(1)], {
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  process.exit(await p.exited);
+  let json = false;
+  let all = false;
+  for (const a of args.slice(1)) {
+    if (a === "--json") json = true;
+    else if (a === "--all") all = true;
+    else {
+      err(`unknown flag for wt ls: ${a}`);
+      process.exit(1);
+    }
+  }
+  const spin = json ? null : spinner(all ? "Scanning ~/Developer" : "Scanning worktrees");
+  try {
+    const out = await cmdLs({ json, all, cwd });
+    spin?.stop();
+    console.log(out);
+  } catch (e) {
+    spin?.stop();
+    exitFrom(e);
+  }
+  process.exit(0);
 }
 
 if (command === "rm" || command === "remove") {
