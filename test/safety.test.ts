@@ -98,14 +98,17 @@ describe("runSafetyPipeline", () => {
     }
   });
 
-  test("cmdRm blocks on env drift and salvages before a clean removal", async () => {
+  test("cmdRm blocks on env drift WITHOUT writing archive copies", async () => {
     const repo = makeRepo();
     try {
       writeIn(repo, repo.dir, ".env", "A=1\n");
       const wt = repo.addWorktree("lane", { branch: "lane" });
       writeIn(repo, wt, ".env", "A=1\nB=2\n");
+      writeIn(repo, wt, ".scratchpad/unique.md", "would salvage on a clean removal\n");
       await expect(cmdRm("lane", { deleteBranch: false, cwd: repo.dir })).rejects.toThrow();
       expect(existsSync(wt)).toBe(true);
+      // blocked removal must leave no orphaned salvage copies behind
+      expect(existsSync(join(repo.dir, ".scratchpad/archive"))).toBe(false);
     } finally {
       repo.rm();
     }
