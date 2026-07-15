@@ -259,8 +259,14 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       case "o":
         if (row) {
           const editor = process.env.EDITOR || process.env.VISUAL || "code";
-          Bun.spawn([editor, row.path], { stdout: "ignore", stderr: "ignore" });
-          status = `opened ${row.slug} in ${basename(editor)}`;
+          try {
+            // Bun.spawn throws synchronously on ENOENT — a stale $EDITOR must
+            // not crash the TUI.
+            Bun.spawn([editor, row.path], { stdout: "ignore", stderr: "ignore" });
+            status = `opened ${row.slug} in ${basename(editor)}`;
+          } catch {
+            status = `cannot launch editor: ${editor}`;
+          }
           paint();
         }
         return;
