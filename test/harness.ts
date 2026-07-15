@@ -2,7 +2,7 @@
 // exercise wt against real git state. Every fixture is isolated from the
 // user's global git config and cleaned up by the caller via rm().
 
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { spawnSync } from "bun";
@@ -77,7 +77,8 @@ export class FixtureRepo {
 
 /** Create a repo with one initial commit on `main`. */
 export function makeRepo(): FixtureRepo {
-  const root = mkdtempSync(join(tmpdir(), "wt-fixture-"));
+  // realpath so fixture paths match git's canonicalization (/var → /private/var on macOS)
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "wt-fixture-")));
   const dir = join(root, "repo");
   mkdirSync(dir);
   const repo = new FixtureRepo(root, dir);
