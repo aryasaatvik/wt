@@ -27,7 +27,7 @@ ln -s ~/Developer/wt/bin/wt ~/.local/bin/wt
 ln -s ~/Developer/wt/completions/wt.zsh ~/.zsh/completions/wt.zsh
 ```
 
-Requires: `git`, `rsync`, [`ni`](https://github.com/antfu/ni).
+Requires: `git`, `rsync`, [`ni`](https://github.com/antfu/ni), and [`bun`](https://bun.sh) >= 1.3 when running from source.
 
 ## Usage
 
@@ -35,11 +35,15 @@ Requires: `git`, `rsync`, [`ni`](https://github.com/antfu/ni).
 wt x/my-feature           # create worktree from main
 wt new x/my-feature dev   # create from a specific base branch
 wt new x/my-feature --no-install
-wt rm x/my-feature        # remove worktree and keep branch
+wt rm x/my-feature        # remove worktree by branch (keeps branch)
+wt rm lane-1              # remove by directory name — how detached worktrees are addressed
+wt rm ../myrepo-worktrees/lane-1   # remove by path
 wt rm x/my-feature -D     # remove worktree and delete branch
 wt ls                     # list all worktrees
 wt --verbose x/feature    # show rsync file list
 ```
+
+`wt rm` refuses worktrees with uncommitted changes and never passes `--force` to git.
 
 ### Worktree layout
 
@@ -57,11 +61,11 @@ Branch slashes are converted to dashes for the directory name.
 All gitignored files are synced except heavy artifacts:
 
 - **JS/TS**: `node_modules`, `.next`, `.turbo`, `dist`, `.vercel`, `.cache`
-- **Infra**: `.sst`
+- **Infra**: `.sst`, `.wrangler`
 - **Xcode/Swift**: `build`, `.build`, `DerivedData`, `Pods`, `Carthage`, `xcuserdata`
-- **Misc**: `.wrangler`
+- **Agent/tooling state**: `.claude/worktrees`, `.conductor`, `.playwright`
 
-Edit the `SYNC_EXCLUDE` array in `bin/wt` to customize.
+Entries match path components as prefixes (`DerivedData` also excludes `DerivedDataDevice`). Edit `SYNC_EXCLUDE` in `src/sync.ts` to customize.
 
 If file sync fails, `wt` exits nonzero and prints the captured `rsync` error output.
 

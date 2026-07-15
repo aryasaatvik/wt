@@ -54,12 +54,15 @@ Steps performed:
 ### Remove
 
 ```bash
-wt rm x/my-feature
-wt remove x/my-feature
+wt rm x/my-feature                 # by branch name
+wt rm lane-1                       # by worktree dir name (how detached worktrees are addressed)
+wt rm ../myrepo-worktrees/lane-1   # by path
 wt rm x/my-feature -D
 ```
 
 Runs `git worktree remove`. Pass `-D` or `--delete-branch` to also delete the branch.
+
+The target resolves in order: exact branch name → worktree directory name under `<repo>-worktrees/` → filesystem path. `wt rm` refuses worktrees with uncommitted changes and never passes `--force` through; commit/stash first, or use raw git deliberately.
 
 ### List
 
@@ -80,14 +83,16 @@ Wraps `git worktree list`.
 
 ## File Sync
 
-The sync step copies all gitignored files from the source repo to the worktree, **excluding** heavy artifacts defined in the `SYNC_EXCLUDE` array in the script:
+The sync step copies all gitignored files from the source repo to the worktree, **excluding** heavy artifacts defined in `SYNC_EXCLUDE` (`src/sync.ts`):
 
 - **JS/TS**: `node_modules`, `.next`, `.turbo`, `dist`, `.vercel`, `.cache`
-- **Infra**: `.sst`
+- **Infra**: `.sst`, `.wrangler`
 - **Xcode/Swift**: `build`, `.build`, `DerivedData`, `Pods`, `Carthage`, `xcuserdata`
-- **Misc**: `.wrangler`
+- **Agent/tooling state**: `.claude/worktrees`, `.conductor`, `.playwright`
 
-Edit `SYNC_EXCLUDE` in `bin/wt` to customize.
+Entries match path components as prefixes (`DerivedData` also catches `DerivedDataDevice`). Edit `SYNC_EXCLUDE` in `src/sync.ts` to customize.
+
+Creation also writes a provenance marker (`.git/worktrees/<name>/wt.json` in the primary) recording the branch, base, and the list of synced files.
 
 If file sync fails, `wt` exits nonzero and prints the captured `rsync` error output.
 
