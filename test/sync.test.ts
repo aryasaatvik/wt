@@ -32,4 +32,11 @@ describe("isExcluded", () => {
     expect(isExcluded(".scratchpad/notes.md")).toBe(false);
     expect(isExcluded(".vscode/settings.json")).toBe(false);
   });
+
+  test("prefix matching applies to directories only, never the file component", () => {
+    expect(isExcluded("builder-config.json")).toBe(false);
+    expect(isExcluded("app/buildinfo.txt")).toBe(false);
+    expect(isExcluded("builder-cache/artifact.bin")).toBe(true);
+    expect(isExcluded("distcache/objects/a")).toBe(true);
+  });
 });

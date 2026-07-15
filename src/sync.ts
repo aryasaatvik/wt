@@ -3,9 +3,11 @@
 
 import { runAsync } from "./term.ts";
 
-// Entries match path COMPONENTS as prefixes: `DerivedData` excludes both
-// `DerivedData/` and `DerivedDataDevice/`. Entries containing `/` match that
-// relative segment sequence at any directory boundary.
+// Entries name heavy artifact DIRECTORIES and match directory components as
+// prefixes: `DerivedData` excludes both `DerivedData/` and
+// `DerivedDataDevice/`. The final path component is a file, never matched by
+// prefix — a gitignored `builder-config.json` still syncs. Entries containing
+// `/` match that relative segment sequence at any directory boundary.
 export const SYNC_EXCLUDE = [
   // JS/TS
   "node_modules",
@@ -39,7 +41,8 @@ export function isExcluded(rel: string): boolean {
       return true;
     }
   }
-  return rel.split("/").some((comp) => COMPONENT_EXCLUDES.some((e) => comp.startsWith(e)));
+  const dirs = rel.split("/").slice(0, -1);
+  return dirs.some((comp) => COMPONENT_EXCLUDES.some((e) => comp.startsWith(e)));
 }
 
 /**

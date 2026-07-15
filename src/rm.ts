@@ -54,7 +54,14 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
     throw new ExitError(1);
   }
 
-  const dirty = run(["git", "-C", wt.path, "status", "--porcelain"]).trim();
+  // Fail closed: if status can't be read we must not assume the tree is clean.
+  const status = await runAsync(["git", "-C", wt.path, "status", "--porcelain"]);
+  if (!status.ok) {
+    err(`Cannot read status of ${bold(target)} — not removing`);
+    detail(status.stderr);
+    throw new ExitError(1);
+  }
+  const dirty = status.stdout.trim();
   if (dirty) {
     err(`Worktree ${bold(target)} has uncommitted changes — not removing`);
     detail(dirty);
