@@ -24,6 +24,7 @@ ${bold("Commands:")}
                        -D, --delete-branch  Also delete the branch
                        Refuses dirty worktrees; wt never uses --force
   wt ls|list [flags]    Status table: branch, dirty, ahead/behind, PR, size, age
+                       -v, --verdicts  append reachability verdicts
                        --json   machine-readable records
                        --all    scan every <repo>-worktrees dir under ~/Developer
 
@@ -52,9 +53,11 @@ const command = args[0]!;
 if (command === "ls" || command === "list") {
   let json = false;
   let all = false;
+  let verdicts = false;
   for (const a of args.slice(1)) {
     if (a === "--json") json = true;
     else if (a === "--all") all = true;
+    else if (a === "-v" || a === "--verdicts") verdicts = true;
     else {
       err(`unknown flag for wt ls: ${a}`);
       process.exit(1);
@@ -62,7 +65,7 @@ if (command === "ls" || command === "list") {
   }
   const spin = json ? null : spinner(all ? "Scanning ~/Developer" : "Scanning worktrees");
   try {
-    const out = await cmdLs({ json, all, cwd });
+    const out = await cmdLs({ json, all, verdicts, cwd });
     spin?.stop();
     console.log(out);
   } catch (e) {
