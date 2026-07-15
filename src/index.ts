@@ -24,6 +24,7 @@ ${bold("Commands:")}
                        -D, --delete-branch  Also delete the branch
                        Refuses dirty worktrees; wt never uses --force
   wt ls|list [flags]    Status table: branch, dirty, ahead/behind, PR, size, age
+                       Interactive picker on a TTY (--plain for the table)
                        -v, --verdicts  append reachability verdicts
                        --json   machine-readable records
                        --all    scan every <repo>-worktrees dir under ~/Developer
@@ -60,25 +61,39 @@ if (command === "ls" || command === "list") {
   let json = false;
   let all = false;
   let verdicts = false;
+  let plain = false;
   for (const a of args.slice(1)) {
     if (a === "--json") json = true;
     else if (a === "--all") all = true;
     else if (a === "-v" || a === "--verdicts") verdicts = true;
+    else if (a === "--plain") plain = true;
     else {
       err(`unknown flag for wt ls: ${a}`);
       process.exit(1);
     }
   }
-  const spin = json ? null : spinner(all ? "Scanning ~/Developer" : "Scanning worktrees");
-  try {
-    const out = await cmdLs({ json, all, verdicts, cwd });
-    spin?.stop();
-    console.log(out);
-  } catch (e) {
-    spin?.stop();
-    exitFrom(e);
+  if (!json && !all && !plain && process.stdout.isTTY) {
+    const { runPicker } = await import("./picker.ts");
+    try {
+      await runPicker({ cwd, verdicts });
+      // The renderer owns the process from here; the picker's quit() exits.
+      // Park so control never falls through to the create path below.
+      await new Promise(() => {});
+    } catch (e) {
+      exitFrom(e);
+    }
+  } else {
+    const spin = json ? null : spinner(all ? "Scanning ~/Developer" : "Scanning worktrees");
+    try {
+      const out = await cmdLs({ json, all, verdicts, cwd });
+      spin?.stop();
+      console.log(out);
+    } catch (e) {
+      spin?.stop();
+      exitFrom(e);
+    }
+    process.exit(0);
   }
-  process.exit(0);
 }
 
 if (command === "reap") {
