@@ -3,7 +3,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { scanWorktrees, type ScanOptions, type WorktreeStatus } from "./scan.ts";
-import { bold, cyan, dim, gray, green, pad, red, yellow } from "./term.ts";
+import { bold, cyan, dim, gray, green, pad, pool, red, yellow } from "./term.ts";
 import { err, ExitError } from "./ui.ts";
 
 export function humanSize(kb: number | null): string {
@@ -143,20 +143,23 @@ export async function cmdLs(opts: LsOptions): Promise<string> {
 
   const devRoot = opts.devRoot ?? join(process.env.HOME ?? "~", "Developer");
   const primaries = discoverPrimaries(devRoot);
+  // repos scan concurrently; each scan already pools its own probes
+  const perRepo = await pool(primaries, 4, async (primary) => {
+    try {
+      return { primary, records: await scanWorktrees(primary, opts.scan) };
+    } catch {
+      return null; // unreadable/broken repo — skip rather than abort the sweep
+    }
+  });
   const fleet: FleetRecord[] = [];
   const sections: string[] = [];
-  for (const primary of primaries) {
-    let records: WorktreeStatus[];
-    try {
-      records = await scanWorktrees(primary, opts.scan);
-    } catch {
-      continue; // unreadable/broken repo — skip rather than abort the sweep
-    }
-    const repo = basename(primary);
-    fleet.push(...records.map((r) => ({ ...r, repo, repoPath: primary })));
-    const lanes = records.filter((r) => !r.primary);
+  for (const entry of perRepo) {
+    if (!entry) continue;
+    const repo = basename(entry.primary);
+    fleet.push(...entry.records.map((r) => ({ ...r, repo, repoPath: entry.primary })));
+    const lanes = entry.records.filter((r) => !r.primary);
     if (lanes.length > 0) {
-      sections.push(`${bold(repo)} ${gray(dirname(primary))}\n${renderTable(lanes)}`);
+      sections.push(`${bold(repo)} ${gray(dirname(entry.primary))}\n${renderTable(lanes)}`);
     }
   }
   if (opts.json) return JSON.stringify(fleet, null, 2);
