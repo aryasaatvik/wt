@@ -5,6 +5,18 @@ import { basename, dirname, join } from "node:path";
 import { scanWorktrees, type ScanOptions, type WorktreeStatus } from "./scan.ts";
 import { bold, cyan, dim, gray, green, pad, pool, red, yellow } from "./term.ts";
 import { err, ExitError } from "./ui.ts";
+import { classifyWorktree, verdictLabel } from "./verdict.ts";
+
+export type LsRecord = WorktreeStatus & { verdict?: string };
+
+/** Attach a verdict label to every non-primary record (probes run pooled). */
+export async function withVerdicts(records: WorktreeStatus[]): Promise<LsRecord[]> {
+  return pool(records, 8, async (r) => {
+    if (r.primary) return r as LsRecord;
+    const v = await classifyWorktree(r.path);
+    return { ...r, verdict: verdictLabel(v, r.prState, r.prNumber) };
+  });
+}
 
 export function humanSize(kb: number | null): string {
   if (kb === null) return "-";
@@ -57,7 +69,8 @@ function prLabel(r: WorktreeStatus): string {
 const HEADERS = ["WORKTREE", "BRANCH", "DIRTY", "±", "PR", "SIZE", "AGE"] as const;
 
 /** Plain-text table; colors come from term.ts and disable themselves when piped. */
-export function renderTable(records: WorktreeStatus[], nowMs: number = Date.now()): string {
+export function renderTable(records: LsRecord[], nowMs: number = Date.now()): string {
+  const withVerdict = records.some((r) => r.verdict !== undefined);
   const rows = records.map((r) => [
     r.primary ? `${r.slug} (primary)` : r.slug,
     branchLabel(r),
@@ -66,9 +79,11 @@ export function renderTable(records: WorktreeStatus[], nowMs: number = Date.now(
     prLabel(r),
     humanSize(r.sizeKb),
     humanAge(r.lastCommitAt, nowMs),
+    ...(withVerdict ? [r.verdict ?? "-"] : []),
   ]);
-  const widths = HEADERS.map((h, i) => Math.max(h.length, ...rows.map((row) => row[i]!.length)));
-  const lines = [HEADERS.map((h, i) => bold(pad(h, widths[i]!))).join("  ")];
+  const headers = withVerdict ? [...HEADERS, "VERDICT"] : [...HEADERS];
+  const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((row) => row[i]!.length)));
+  const lines = [headers.map((h, i) => bold(pad(h, widths[i]!))).join("  ")];
   for (let ri = 0; ri < rows.length; ri++) {
     const r = records[ri]!;
     const row = rows[ri]!;
@@ -123,22 +138,24 @@ export function discoverPrimaries(root: string, depth = 3): string[] {
 export interface LsOptions {
   json: boolean;
   all: boolean;
+  verdicts?: boolean;
   cwd: string;
   devRoot?: string;
   scan?: ScanOptions;
 }
 
-type FleetRecord = WorktreeStatus & { repo: string; repoPath: string };
+type FleetRecord = LsRecord & { repo: string; repoPath: string };
 
 export async function cmdLs(opts: LsOptions): Promise<string> {
   if (!opts.all) {
-    let records: WorktreeStatus[];
+    let records: LsRecord[];
     try {
       records = await scanWorktrees(opts.cwd, opts.scan);
     } catch {
       err("not inside a git repository (use wt ls --all to scan ~/Developer)");
       throw new ExitError(1);
     }
+    if (opts.verdicts) records = await withVerdicts(records);
     return opts.json ? JSON.stringify(records, null, 2) : renderTable(records);
   }
 
@@ -147,7 +164,9 @@ export async function cmdLs(opts: LsOptions): Promise<string> {
   // repos scan concurrently; each scan already pools its own probes
   const perRepo = await pool(primaries, 4, async (primary) => {
     try {
-      return { primary, records: await scanWorktrees(primary, opts.scan) };
+      let records: LsRecord[] = await scanWorktrees(primary, opts.scan);
+      if (opts.verdicts) records = await withVerdicts(records);
+      return { primary, records };
     } catch {
       return null; // unreadable/broken repo — skip rather than abort the sweep
     }

@@ -3,12 +3,15 @@
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { listWorktrees, resolvePrimaryRepo, type WorktreeInfo } from "./git.ts";
-import { bold, dim, run, runAsync } from "./term.ts";
+import { runSafetyPipeline } from "./safety.ts";
+import { bold, dim, runAsync } from "./term.ts";
 import { detail, err, ExitError, info, log } from "./ui.ts";
 
 export interface RmOptions {
   deleteBranch: boolean;
   cwd: string;
+  /** abort if the worktree HEAD no longer matches this sha (reap's TOCTOU guard) */
+  expectHead?: string;
 }
 
 /**
@@ -54,18 +57,31 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
     throw new ExitError(1);
   }
 
-  // Fail closed: if status can't be read we must not assume the tree is clean.
-  const status = await runAsync(["git", "-C", wt.path, "status", "--porcelain"]);
-  if (!status.ok) {
-    err(`Cannot read status of ${bold(target)} — not removing`);
-    detail(status.stderr);
+  if (opts.expectHead && !wt.head.startsWith(opts.expectHead)) {
+    err(`HEAD of ${bold(target)} moved since it was inspected — not removing`);
+    detail(`expected ${opts.expectHead}, found ${wt.head}`);
     throw new ExitError(1);
   }
-  const dirty = status.stdout.trim();
-  if (dirty) {
-    err(`Worktree ${bold(target)} has uncommitted changes — not removing`);
-    detail(dirty);
-    console.error(`    Commit or stash them first (wt never uses --force).`);
+
+  const repoRoot = resolvePrimaryRepo(opts.cwd);
+  // Evaluate read-only first: when removal is blocked, nothing has been
+  // copied into the archive. Only a clean preview runs the salvaging pass.
+  const preview = await runSafetyPipeline(wt.path, repoRoot, { dryRun: true });
+  if (!preview.ok) {
+    err(`Not removing ${bold(target)}:`);
+    for (const flag of preview.flags) detail(`[${flag.kind}] ${flag.detail}`);
+    console.error(`    Resolve the flags first (wt never uses --force).`);
+    throw new ExitError(1);
+  }
+  const safety = await runSafetyPipeline(wt.path, repoRoot);
+  for (const rel of safety.salvaged) {
+    log(`Salvaged ${dim(rel)} to primary .scratchpad archive`);
+  }
+  if (!safety.ok) {
+    // something changed between the preview and the salvaging pass
+    err(`Not removing ${bold(target)}:`);
+    for (const flag of safety.flags) detail(`[${flag.kind}] ${flag.detail}`);
+    console.error(`    Resolve the flags first (wt never uses --force).`);
     throw new ExitError(1);
   }
 

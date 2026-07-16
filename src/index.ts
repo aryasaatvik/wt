@@ -24,8 +24,15 @@ ${bold("Commands:")}
                        -D, --delete-branch  Also delete the branch
                        Refuses dirty worktrees; wt never uses --force
   wt ls|list [flags]    Status table: branch, dirty, ahead/behind, PR, size, age
+                       -v, --verdicts  append reachability verdicts
                        --json   machine-readable records
                        --all    scan every <repo>-worktrees dir under ~/Developer
+  wt reap [flags]       Report reapable worktrees (dry run by default)
+                       Auto-removable: REACHABLE, REACHABLE_BRANCH, EMPTY,
+                       CONTENT_LANDED — never dirty/env-drifted/stranded lanes
+                       --apply             remove them (branches are kept)
+                       --all               sweep every repo under ~/Developer
+                       --older-than <days> only lanes with older last commits
 
 ${bold("Options:")}
   --verbose            Show detailed rsync output
@@ -52,9 +59,11 @@ const command = args[0]!;
 if (command === "ls" || command === "list") {
   let json = false;
   let all = false;
+  let verdicts = false;
   for (const a of args.slice(1)) {
     if (a === "--json") json = true;
     else if (a === "--all") all = true;
+    else if (a === "-v" || a === "--verdicts") verdicts = true;
     else {
       err(`unknown flag for wt ls: ${a}`);
       process.exit(1);
@@ -62,7 +71,7 @@ if (command === "ls" || command === "list") {
   }
   const spin = json ? null : spinner(all ? "Scanning ~/Developer" : "Scanning worktrees");
   try {
-    const out = await cmdLs({ json, all, cwd });
+    const out = await cmdLs({ json, all, verdicts, cwd });
     spin?.stop();
     console.log(out);
   } catch (e) {
@@ -70,6 +79,46 @@ if (command === "ls" || command === "list") {
     exitFrom(e);
   }
   process.exit(0);
+}
+
+if (command === "reap") {
+  let apply = false;
+  let all = false;
+  let olderThanDays: number | undefined;
+  const rest = args.slice(1);
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
+    if (a === "--apply") apply = true;
+    else if (a === "--all") all = true;
+    else if (a === "--older-than") {
+      olderThanDays = Number(rest[++i]);
+      if (!Number.isFinite(olderThanDays) || olderThanDays < 0) {
+        err("--older-than expects a number of days");
+        process.exit(1);
+      }
+    } else {
+      err(`unknown flag for wt reap: ${a}`);
+      process.exit(1);
+    }
+  }
+  const { applyReap, planReap, renderReapReport } = await import("./reap.ts");
+  const spin = spinner(all ? "Planning reap across ~/Developer" : "Planning reap");
+  try {
+    const entries = await planReap({ all, olderThanDays, cwd });
+    spin.stop();
+    if (entries.length === 0) {
+      console.log("no worktrees to consider");
+      process.exit(0);
+    }
+    const applied = apply ? await applyReap(entries) : undefined;
+    console.log(renderReapReport(entries, apply, applied));
+    const planSkips = entries.some((e) => e.disposition === "skip");
+    const applySkips = (applied?.skipped.length ?? 0) > 0;
+    process.exit(planSkips || applySkips ? 1 : 0);
+  } catch (e) {
+    spin.stop();
+    exitFrom(e);
+  }
 }
 
 if (command === "rm" || command === "remove") {

@@ -39,11 +39,26 @@ wt rm x/my-feature        # remove worktree by branch (keeps branch)
 wt rm lane-1              # remove by directory name — how detached worktrees are addressed
 wt rm ../myrepo-worktrees/lane-1   # remove by path
 wt rm x/my-feature -D     # remove worktree and delete branch
-wt ls                     # list all worktrees
+wt ls                     # status table: branch, dirty, ahead/behind, PR, size, age
+wt ls -v                  # append reachability verdicts
+wt ls --all               # sweep every <repo>-worktrees dir under ~/Developer
+wt ls --json              # machine-readable records
+wt reap                   # dry-run report of safely-removable worktrees
+wt reap --apply           # remove them (branches are kept)
+wt reap --all --older-than 14
 wt --verbose x/feature    # show rsync file list
 ```
 
-`wt rm` refuses worktrees with uncommitted changes and never passes `--force` to git.
+### Removal safety
+
+`wt rm` and `wt reap` never pass `--force` to git. Before any removal:
+
+- unique `.scratchpad/**/*.md` notes are salvaged into the primary's `.scratchpad/archive/<date>-worktree-salvage/<worktree>/`
+- a scratchpad note that is **newer** than the primary's copy blocks removal
+- env files (`.env`, `.env.*`, `.dev.vars` — never `*.example`) that differ from the primary block removal; drift is reported as key **names** only, values are never printed
+- dirty or status-unreadable worktrees block removal
+
+`wt reap` classifies each worktree's reachability — `REACHABLE`, `REACHABLE_BRANCH`, `EMPTY`, `CONTENT_LANDED` (squash-merge detection), `STRANDED(n/m)` — and only the first four tiers ever auto-remove.
 
 ### Worktree layout
 
