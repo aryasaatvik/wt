@@ -29,7 +29,7 @@ _wt() {
         rm|remove)
           _arguments \
             '(-D --delete-branch)'{-D,--delete-branch}'[Also delete the branch]' \
-            '*:worktree branch:_wt_worktree_branches'
+            '*:worktree:_wt_worktree_targets'
           return
           ;;
         new|create)
@@ -50,14 +50,31 @@ _wt_branches() {
   _describe 'branch' branches
 }
 
-_wt_worktree_branches() {
-  local -a wt_branches
-  wt_branches=(${(f)"$(git worktree list --porcelain 2>/dev/null | grep '^branch ' | sed 's|^branch refs/heads/||')"})
-  # Exclude main worktree (current repo)
-  local main_branch
-  main_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
-  wt_branches=(${wt_branches:#$main_branch})
-  _describe 'worktree branch' wt_branches
+# rm targets: worktree branches plus directory names (how detached worktrees
+# are addressed). The primary worktree is excluded.
+_wt_worktree_targets() {
+  local -a targets
+  local primary=""
+  local path="" branch=""
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        path="${line#worktree }"
+        [[ -z "$primary" ]] && primary="$path" && path=""
+        ;;
+      "branch refs/heads/"*)
+        branch="${line#branch refs/heads/}"
+        ;;
+      "")
+        if [[ -n "$path" ]]; then
+          [[ -n "$branch" ]] && targets+=("$branch")
+          targets+=("${path:t}")
+        fi
+        path="" branch=""
+        ;;
+    esac
+  done < <(git worktree list --porcelain 2>/dev/null; echo)
+  _describe 'worktree' targets
 }
 
 if [ "${funcstack[1]}" = "_wt" ]; then
