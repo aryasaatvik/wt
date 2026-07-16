@@ -73,11 +73,13 @@ wt ls            # status table: branch, dirty, ahead/behind, PR, size, age
 wt ls --json     # machine-readable records
 wt ls -v         # append reachability verdicts
 wt ls --all      # every <repo>-worktrees dir under ~/Developer, incl. stray registrations
+wt ls --fresh    # remeasure sizes, ignoring the 24h cache
+wt ls --no-size  # skip size measurement entirely
 ```
 
 `wt ls` is always inline and safe for agents. The interactive picker (j/k move, x remove via the safety pipeline, o editor, enter print path, v verdicts, r rescan, q quit) is reserved for **bare `wt`** on a TTY — an agent must never invoke it, since it takes over the terminal and waits for keys. Bare `wt` without a TTY prints help.
 
-PR state comes from `gh` and degrades to `?`/`"unknown"` when gh is missing or offline.
+PR state comes from `gh` and degrades to `?`/`"unknown"` when gh is missing or offline. Sizes come from a 24h per-worktree cache (`~` prefix = cached; `sizeCached` in `--json`); `du` only runs on cache misses, so `--all` is fast after the first sweep.
 
 ### Reap
 

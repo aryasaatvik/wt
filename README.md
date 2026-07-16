@@ -49,6 +49,8 @@ wt ls                     # status table — always inline, stays in scrollback
 wt ls -v                  # append reachability verdicts
 wt ls --all               # sweep every <repo>-worktrees dir under ~/Developer
 wt ls --json              # machine-readable records
+wt ls --fresh             # remeasure sizes, ignoring the 24h cache
+wt ls --no-size           # skip size measurement entirely
 wt reap                   # dry-run report of safely-removable worktrees
 wt reap --apply           # remove them (branches are kept)
 wt reap --all --older-than 14
@@ -66,6 +68,10 @@ Since `enter` prints the selected path, the picker doubles as a jump command:
 ```bash
 cd "$(wt)"
 ```
+
+### Size cache
+
+`du` over a fleet of node_modules trees is the dominant cost of a scan, so each worktree's size is cached for 24 hours in its own gitdir (`.git/worktrees/<name>/wt-size.json`; git removes it with the worktree). A `~` prefix in the SIZE column marks a cached value. `--fresh` remeasures on demand, `--no-size` skips measurement entirely; sizes are display-only, so removal safety never depends on them.
 
 ### Removal safety
 

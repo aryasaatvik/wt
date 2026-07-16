@@ -51,6 +51,12 @@ export function aheadBehindLabel(r: WorktreeStatus): string {
   return `+${r.ahead}/-${r.behind}`;
 }
 
+/** `~` marks a size served from the day-old cache (wt ls --fresh remeasures). */
+export function sizeLabel(r: WorktreeStatus): string {
+  const size = humanSize(r.sizeKb);
+  return r.sizeCached && r.sizeKb !== null ? `~${size}` : size;
+}
+
 export function prLabel(r: WorktreeStatus): string {
   switch (r.prState) {
     case "open":
@@ -77,7 +83,7 @@ export function renderTable(records: LsRecord[], nowMs: number = Date.now()): st
     dirtyLabel(r),
     aheadBehindLabel(r),
     prLabel(r),
-    humanSize(r.sizeKb),
+    sizeLabel(r),
     humanAge(r.lastCommitAt, nowMs),
     ...(withVerdict ? [r.verdict ?? "-"] : []),
   ]);
