@@ -28,19 +28,27 @@ if (requestedTag && requestedTag !== expectedTag) {
 
 const tag = expectedTag;
 
+// A missing binary makes spawnSync return error + null status without ever
+// starting a child, so `stdio: inherit` prints nothing. Throwing surfaces the
+// ENOENT instead of exiting 1 in silence.
 function run(command: string, args: ReadonlyArray<string>) {
   const result = spawnSync(command, args, { cwd: repoRoot, stdio: "inherit" });
+  if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
 function capture(command: string, args: ReadonlyArray<string>) {
   const result = spawnSync(command, args, { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+  if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
   return result.stdout.trim();
 }
 
 function succeeds(command: string, args: ReadonlyArray<string>) {
-  return spawnSync(command, args, { cwd: repoRoot, stdio: "ignore" }).status === 0;
+  const result = spawnSync(command, args, { cwd: repoRoot, stdio: "ignore" });
+  // a missing binary is not "the probe answered no" — it must not be swallowed
+  if (result.error) throw result.error;
+  return result.status === 0;
 }
 
 run("git", ["fetch", "origin", "main", "--tags"]);
