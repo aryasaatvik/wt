@@ -128,8 +128,10 @@ async function measureSize(
         sizeKb?: unknown;
         sizedAt?: unknown;
       };
+      // ageMs >= 0: a future-dated entry (clock jumped backward) must count
+      // as stale, or it would bypass the TTL forever
       const ageMs = Date.now() - Date.parse(String(cached.sizedAt));
-      if (typeof cached.sizeKb === "number" && Number.isFinite(cached.sizeKb) && ageMs < SIZE_CACHE_TTL_MS) {
+      if (typeof cached.sizeKb === "number" && Number.isFinite(cached.sizeKb) && ageMs >= 0 && ageMs < SIZE_CACHE_TTL_MS) {
         return { sizeKb: cached.sizeKb, sizeCached: true };
       }
     } catch {
@@ -140,6 +142,8 @@ async function measureSize(
   const du = await runAsync(["du", "-sk", wtPath]);
   if (!du.ok) return { sizeKb: null, sizeCached: false };
   const sizeKb = Number(du.stdout.trim().split(/\s+/)[0]);
+  // exit 0 with malformed output must degrade like a failed du, not cache NaN
+  if (!Number.isFinite(sizeKb)) return { sizeKb: null, sizeCached: false };
   if (cachePath) {
     try {
       writeFileSync(cachePath, `${JSON.stringify({ sizeKb, sizedAt: new Date().toISOString() })}\n`);

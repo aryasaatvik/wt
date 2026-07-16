@@ -139,6 +139,14 @@ describe("scanWorktrees", () => {
       expect(afterStale.sizeCached).toBe(false);
       expect(afterStale.sizeKb).not.toBe(424242);
 
+      // future-dated entry (clock jumped backward) counts as stale, not
+      // perpetually fresh
+      const future = new Date(Date.now() + 3600_000).toISOString();
+      writeFileSync(laneCache, JSON.stringify({ sizeKb: 424242, sizedAt: future }));
+      const afterFuture = (await scanWorktrees(repo.dir)).find((r) => r.slug === "lane")!;
+      expect(afterFuture.sizeCached).toBe(false);
+      expect(afterFuture.sizeKb).not.toBe(424242);
+
       // corrupt cache must degrade to a fresh du, never throw
       writeFileSync(laneCache, "not json{");
       const afterCorrupt = (await scanWorktrees(repo.dir)).find((r) => r.slug === "lane")!;
