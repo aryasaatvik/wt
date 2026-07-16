@@ -25,9 +25,13 @@ ${bold("Commands:")}
                        -D, --delete-branch  Also delete the branch
                        Refuses dirty worktrees; wt never uses --force
   wt ls|list [flags]    Status table: branch, dirty, ahead/behind, PR, size, age
+                       Sizes come from a 24h per-worktree cache (~ marks
+                       a cached value); du only runs on cache misses
                        -v, --verdicts  append reachability verdicts
-                       --json   machine-readable records
-                       --all    scan every <repo>-worktrees dir under ~/Developer
+                       --json     machine-readable records
+                       --all      scan every <repo>-worktrees dir under ~/Developer
+                       --fresh    remeasure sizes, ignoring the cache
+                       --no-size  skip size measurement entirely
   wt reap [flags]       Report reapable worktrees (dry run by default)
                        Auto-removable: REACHABLE, REACHABLE_BRANCH, EMPTY,
                        CONTENT_LANDED — never dirty/env-drifted/stranded lanes
@@ -80,18 +84,27 @@ if (command === "ls" || command === "list") {
   let json = false;
   let all = false;
   let verdicts = false;
+  let fresh = false;
+  let noSize = false;
   for (const a of args.slice(1)) {
     if (a === "--json") json = true;
     else if (a === "--all") all = true;
     else if (a === "-v" || a === "--verdicts") verdicts = true;
+    else if (a === "--fresh") fresh = true;
+    else if (a === "--no-size") noSize = true;
     else {
       err(`unknown flag for wt ls: ${a}`);
       process.exit(1);
     }
   }
+  if (fresh && noSize) {
+    err("--fresh and --no-size conflict: one remeasures sizes, the other skips them");
+    process.exit(1);
+  }
+  const sizeMode = fresh ? "fresh" : noSize ? "skip" : undefined;
   const spin = json ? null : spinner(all ? "Scanning ~/Developer" : "Scanning worktrees");
   try {
-    const out = await cmdLs({ json, all, verdicts, cwd });
+    const out = await cmdLs({ json, all, verdicts, cwd, scan: { sizeMode } });
     spin?.stop();
     console.log(out);
   } catch (e) {

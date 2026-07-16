@@ -15,18 +15,19 @@ import {
   branchLabel,
   dirtyLabel,
   humanAge,
-  humanSize,
   prLabel,
+  sizeLabel,
   withVerdicts,
   type LsRecord,
 } from "./ls.ts";
-import { scanWorktrees } from "./scan.ts";
+import { scanWorktrees, type SizeMode } from "./scan.ts";
 import { runSafetyPipeline } from "./safety.ts";
 import { pad, runAsync } from "./term.ts";
 
 export interface PickerOptions {
   cwd: string;
   verdicts?: boolean;
+  sizeMode?: SizeMode;
 }
 
 export async function runPicker(opts: PickerOptions): Promise<void> {
@@ -77,7 +78,7 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       w.dirty = Math.max(w.dirty, dirtyLabel(r).length);
       w.ab = Math.max(w.ab, aheadBehindLabel(r).length);
       w.pr = Math.max(w.pr, prLabel(r).length);
-      w.size = Math.max(w.size, humanSize(r.sizeKb).length);
+      w.size = Math.max(w.size, sizeLabel(r).length);
       w.age = Math.max(w.age, humanAge(r.lastCommitAt).length);
       w.verdict = Math.max(w.verdict, (r.verdict ?? "-").length);
     }
@@ -97,7 +98,7 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       S("  " + pad(dirtyLabel(r), w.dirty), r.dirty ? RED : MUTED),
       S("  " + pad(aheadBehindLabel(r), w.ab), TEXT),
       S("  " + pad(prLabel(r), w.pr), r.prState === "open" ? CYAN : r.prState === "merged" ? GREEN : MUTED),
-      S("  " + pad(humanSize(r.sizeKb), w.size), TEXT),
+      S("  " + pad(sizeLabel(r), w.size), TEXT),
       S("  " + pad(humanAge(r.lastCommitAt), w.age), MUTED),
     ];
     if (showVerdicts) chunks.push(S("  " + pad(r.verdict ?? "-", w.verdict), MUTED));
@@ -157,7 +158,7 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     status = "scanning…";
     paint();
     try {
-      let rs: LsRecord[] = await scanWorktrees(repoRoot);
+      let rs: LsRecord[] = await scanWorktrees(repoRoot, { sizeMode: opts.sizeMode });
       if (showVerdicts) rs = await withVerdicts(rs);
       records = rs;
       selectedIndex = records.length ? Math.min(idx, records.length - 1) : 0;

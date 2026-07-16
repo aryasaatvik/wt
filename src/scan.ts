@@ -1,8 +1,8 @@
 // Worktree status scan: one record per worktree, probed in parallel.
 // This is the data layer behind `wt ls`, `wt reap`, and the picker.
 
-import { statSync } from "node:fs";
-import { basename } from "node:path";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { listWorktrees, originDefault, resolvePrimaryRepo, type WorktreeInfo } from "./git.ts";
 import { pool, runAsync } from "./term.ts";
 
@@ -24,6 +24,8 @@ export interface WorktreeStatus {
   ahead: number | null;
   behind: number | null;
   sizeKb: number | null;
+  /** true when sizeKb came from the on-disk cache rather than a fresh `du` */
+  sizeCached: boolean;
   lastCommitAt: string | null;
   mtimeMs: number | null;
   prState: PrState;
@@ -36,9 +38,13 @@ export interface PrInfo {
   number: number;
 }
 
+/** "cached" reuses a recent `du` result; "fresh" always remeasures; "skip" omits size. */
+export type SizeMode = "cached" | "fresh" | "skip";
+
 export interface ScanOptions {
   env?: Record<string, string | undefined>;
   concurrency?: number;
+  sizeMode?: SizeMode;
 }
 
 export interface PrListing {
@@ -94,17 +100,72 @@ export function prStateFor(
   return { prState, prNumber: pr.number };
 }
 
+// du over a big node_modules tree is the dominant cost of a scan, and sizes
+// only change meaningfully on installs/builds — a day-old answer is honest
+// for a status display. `wt ls --fresh` remeasures on demand.
+const SIZE_CACHE_TTL_MS = 24 * 3600_000;
+const SIZE_CACHE_FILE = "wt-size.json";
+
+/**
+ * Measure a worktree's disk size, reusing a cached `du` result younger than
+ * the TTL. The cache lives in the worktree's own gitdir (`.git/worktrees/
+ * <name>/` for lanes, `.git/` for the primary), so git removes it with the
+ * worktree and strays are covered too. All cache IO is best-effort: a
+ * missing, corrupt, or unwritable cache degrades to a fresh `du`.
+ */
+async function measureSize(
+  wtPath: string,
+  mode: SizeMode,
+): Promise<{ sizeKb: number | null; sizeCached: boolean }> {
+  if (mode === "skip") return { sizeKb: null, sizeCached: false };
+
+  const gitDirRes = await runAsync(["git", "-C", wtPath, "rev-parse", "--absolute-git-dir"]);
+  const cachePath = gitDirRes.ok ? join(gitDirRes.stdout.trim(), SIZE_CACHE_FILE) : null;
+
+  if (mode === "cached" && cachePath) {
+    try {
+      const cached = JSON.parse(readFileSync(cachePath, "utf8")) as {
+        sizeKb?: unknown;
+        sizedAt?: unknown;
+      };
+      // ageMs >= 0: a future-dated entry (clock jumped backward) must count
+      // as stale, or it would bypass the TTL forever
+      const ageMs = Date.now() - Date.parse(String(cached.sizedAt));
+      if (typeof cached.sizeKb === "number" && Number.isFinite(cached.sizeKb) && ageMs >= 0 && ageMs < SIZE_CACHE_TTL_MS) {
+        return { sizeKb: cached.sizeKb, sizeCached: true };
+      }
+    } catch {
+      // no cache yet, or unreadable/corrupt — fall through to a fresh du
+    }
+  }
+
+  const du = await runAsync(["du", "-sk", wtPath]);
+  if (!du.ok) return { sizeKb: null, sizeCached: false };
+  const sizeKb = Number(du.stdout.trim().split(/\s+/)[0]);
+  // exit 0 with malformed output must degrade like a failed du, not cache NaN
+  if (!Number.isFinite(sizeKb)) return { sizeKb: null, sizeCached: false };
+  if (cachePath) {
+    try {
+      writeFileSync(cachePath, `${JSON.stringify({ sizeKb, sizedAt: new Date().toISOString() })}\n`);
+    } catch {
+      // read-only gitdir — the size is still fresh, just not cached
+    }
+  }
+  return { sizeKb, sizeCached: false };
+}
+
 async function probe(
   wt: WorktreeInfo,
   repoRoot: string,
   defaultBranch: string | null,
+  sizeMode: SizeMode,
 ): Promise<Omit<WorktreeStatus, "prState" | "prNumber">> {
   const g = (...args: string[]) => runAsync(["git", "-C", wt.path, ...args]);
 
-  const [status, upstreamRes, sizeRes, lastCommitRes] = await Promise.all([
+  const [status, upstreamRes, size, lastCommitRes] = await Promise.all([
     g("status", "--porcelain"),
     g("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"),
-    runAsync(["du", "-sk", wt.path]),
+    measureSize(wt.path, sizeMode),
     g("log", "-1", "--format=%cI"),
   ]);
 
@@ -144,7 +205,8 @@ async function probe(
     compareRef,
     ahead,
     behind,
-    sizeKb: sizeRes.ok ? Number(sizeRes.stdout.trim().split(/\s+/)[0]) : null,
+    sizeKb: size.sizeKb,
+    sizeCached: size.sizeCached,
     lastCommitAt: lastCommitRes.ok ? lastCommitRes.stdout.trim() || null : null,
     mtimeMs,
   };
@@ -156,7 +218,7 @@ export async function scanWorktrees(cwd: string, opts: ScanOptions = {}): Promis
   const defaultBranch = originDefault(repoRoot);
   const prsPromise = fetchPrs(repoRoot, opts.env ?? process.env);
   const probed = await pool(worktrees, opts.concurrency ?? 10, (w) =>
-    probe(w, repoRoot, defaultBranch),
+    probe(w, repoRoot, defaultBranch, opts.sizeMode ?? "cached"),
   );
   const listing = await prsPromise;
   return probed.map((r) => ({ ...r, ...prStateFor(r.branch, listing) }));

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { cmdLs, discoverPrimaries, humanAge, humanSize, renderTable } from "../src/ls.ts";
+import { cmdLs, discoverPrimaries, humanAge, humanSize, renderTable, sizeLabel } from "../src/ls.ts";
 import type { WorktreeStatus } from "../src/scan.ts";
 import { makeRepo } from "./harness.ts";
 
@@ -42,6 +42,7 @@ function record(over: Partial<WorktreeStatus>): WorktreeStatus {
     ahead: 0,
     behind: 0,
     sizeKb: 2048,
+    sizeCached: false,
     lastCommitAt: "2026-07-14T12:00:00Z",
     mtimeMs: 0,
     prState: "none",
@@ -49,6 +50,14 @@ function record(over: Partial<WorktreeStatus>): WorktreeStatus {
     ...over,
   };
 }
+
+describe("sizeLabel", () => {
+  test("marks cached sizes with ~ and leaves fresh/missing sizes alone", () => {
+    expect(sizeLabel(record({ sizeKb: 2048, sizeCached: false }))).toBe("2.0M");
+    expect(sizeLabel(record({ sizeKb: 2048, sizeCached: true }))).toBe("~2.0M");
+    expect(sizeLabel(record({ sizeKb: null, sizeCached: false }))).toBe("-");
+  });
+});
 
 describe("renderTable", () => {
   test("plain snapshot", () => {

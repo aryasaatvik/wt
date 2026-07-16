@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { originDefault } from "../src/git.ts";
 import { prStateFor, scanWorktrees, type PrInfo } from "../src/scan.ts";
 import { makeRepo } from "./harness.ts";
@@ -81,6 +83,82 @@ describe("scanWorktrees", () => {
         // query, so PR state must degrade to "unknown", never throw
         expect(r.prState).toBe("unknown");
       }
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("caches sizes in each worktree's gitdir and reuses fresh entries", async () => {
+    const repo = makeRepo();
+    try {
+      const lane = repo.addWorktree("lane", { branch: "lane" });
+      const cachePathFor = (dir: string) =>
+        join(repo.gitIn(dir, "rev-parse", "--absolute-git-dir").trim(), "wt-size.json");
+
+      // first scan measures and writes the cache
+      const first = await scanWorktrees(repo.dir);
+      for (const r of first) {
+        expect(r.sizeCached).toBe(false);
+        expect(r.sizeKb).toBeGreaterThan(0);
+      }
+      const primaryCache = cachePathFor(repo.dir);
+      const laneCache = cachePathFor(lane);
+      expect(primaryCache).toContain("/.git/wt-size.json");
+      expect(laneCache).toContain("/.git/worktrees/");
+      expect(existsSync(primaryCache)).toBe(true);
+      expect(existsSync(laneCache)).toBe(true);
+
+      // a fresh cache entry is served as-is — seed a sentinel value to prove it
+      writeFileSync(laneCache, JSON.stringify({ sizeKb: 424242, sizedAt: new Date().toISOString() }));
+      const second = await scanWorktrees(repo.dir);
+      const cached = second.find((r) => r.slug === "lane")!;
+      expect(cached.sizeKb).toBe(424242);
+      expect(cached.sizeCached).toBe(true);
+
+      // --fresh ignores a valid cache and rewrites it
+      const forced = await scanWorktrees(repo.dir, { sizeMode: "fresh" });
+      const remeasured = forced.find((r) => r.slug === "lane")!;
+      expect(remeasured.sizeCached).toBe(false);
+      expect(remeasured.sizeKb).not.toBe(424242);
+      expect(JSON.parse(readFileSync(laneCache, "utf8")).sizeKb).not.toBe(424242);
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("expired and corrupt cache entries are remeasured, skip mode measures nothing", async () => {
+    const repo = makeRepo();
+    try {
+      const lane = repo.addWorktree("lane", { branch: "lane" });
+      const laneCache = join(repo.gitIn(lane, "rev-parse", "--absolute-git-dir").trim(), "wt-size.json");
+
+      // entry older than the 24h TTL — remeasure and refresh the file
+      const stale = new Date(Date.now() - 25 * 3600_000).toISOString();
+      writeFileSync(laneCache, JSON.stringify({ sizeKb: 424242, sizedAt: stale }));
+      const afterStale = (await scanWorktrees(repo.dir)).find((r) => r.slug === "lane")!;
+      expect(afterStale.sizeCached).toBe(false);
+      expect(afterStale.sizeKb).not.toBe(424242);
+
+      // future-dated entry (clock jumped backward) counts as stale, not
+      // perpetually fresh
+      const future = new Date(Date.now() + 3600_000).toISOString();
+      writeFileSync(laneCache, JSON.stringify({ sizeKb: 424242, sizedAt: future }));
+      const afterFuture = (await scanWorktrees(repo.dir)).find((r) => r.slug === "lane")!;
+      expect(afterFuture.sizeCached).toBe(false);
+      expect(afterFuture.sizeKb).not.toBe(424242);
+
+      // corrupt cache must degrade to a fresh du, never throw
+      writeFileSync(laneCache, "not json{");
+      const afterCorrupt = (await scanWorktrees(repo.dir)).find((r) => r.slug === "lane")!;
+      expect(afterCorrupt.sizeCached).toBe(false);
+      expect(afterCorrupt.sizeKb).toBeGreaterThan(0);
+
+      // skip mode: no size, and the (now valid) cache file is left untouched
+      writeFileSync(laneCache, JSON.stringify({ sizeKb: 424242, sizedAt: new Date().toISOString() }));
+      const skipped = (await scanWorktrees(repo.dir, { sizeMode: "skip" })).find((r) => r.slug === "lane")!;
+      expect(skipped.sizeKb).toBeNull();
+      expect(skipped.sizeCached).toBe(false);
+      expect(JSON.parse(readFileSync(laneCache, "utf8")).sizeKb).toBe(424242);
     } finally {
       repo.rm();
     }
