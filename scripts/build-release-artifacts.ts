@@ -70,7 +70,7 @@ async function buildTarget(target: ReleaseTarget) {
       "",
       "Validate:",
       "  wt --help",
-      "  wt ls --plain",
+      "  wt ls",
       "",
       "Requires git and rsync on PATH. No bun runtime needed.",
       "",
