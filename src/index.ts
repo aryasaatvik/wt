@@ -13,6 +13,7 @@ import { err, ExitError } from "./ui.ts";
 const HELP = `${bold("Usage:")} wt <command> [args]
 
 ${bold("Commands:")}
+  wt                   Interactive picker (TTY only)
   wt [new|create] <branch> [base] [flags]
                        Create worktree from base branch (default: main)
                        Checks out the branch if it already exists
@@ -24,9 +25,7 @@ ${bold("Commands:")}
                        -D, --delete-branch  Also delete the branch
                        Refuses dirty worktrees; wt never uses --force
   wt ls|list [flags]    Status table: branch, dirty, ahead/behind, PR, size, age
-                       Interactive picker on a TTY
                        -v, --verdicts  append reachability verdicts
-                       --plain  force the table even on a TTY
                        --json   machine-readable records
                        --all    scan every <repo>-worktrees dir under ~/Developer
   wt reap [flags]       Report reapable worktrees (dry run by default)
@@ -50,51 +49,56 @@ for (const a of process.argv.slice(2)) {
   else args.push(a);
 }
 
-if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
+if (args[0] === "-h" || args[0] === "--help") {
   console.log(HELP);
   process.exit(0);
 }
 
 const cwd = process.cwd();
+
+// Bare `wt` is the "look around" gesture: the picker owns the terminal, so it
+// only makes sense on a TTY. Every subcommand stays inline and leaves its
+// output in scrollback. Piped or scripted, bare wt is just help.
+if (args.length === 0) {
+  if (!process.stdout.isTTY) {
+    console.log(HELP);
+    process.exit(0);
+  }
+  const { runPicker } = await import("./picker.ts");
+  try {
+    await runPicker({ cwd });
+    // The renderer owns the process from here; the picker's quit() exits.
+    await new Promise(() => {});
+  } catch (e) {
+    exitFrom(e);
+  }
+}
+
 const command = args[0]!;
 
 if (command === "ls" || command === "list") {
   let json = false;
   let all = false;
   let verdicts = false;
-  let plain = false;
   for (const a of args.slice(1)) {
     if (a === "--json") json = true;
     else if (a === "--all") all = true;
     else if (a === "-v" || a === "--verdicts") verdicts = true;
-    else if (a === "--plain") plain = true;
     else {
       err(`unknown flag for wt ls: ${a}`);
       process.exit(1);
     }
   }
-  if (!json && !all && !plain && process.stdout.isTTY) {
-    const { runPicker } = await import("./picker.ts");
-    try {
-      await runPicker({ cwd, verdicts });
-      // The renderer owns the process from here; the picker's quit() exits.
-      // Park so control never falls through to the create path below.
-      await new Promise(() => {});
-    } catch (e) {
-      exitFrom(e);
-    }
-  } else {
-    const spin = json ? null : spinner(all ? "Scanning ~/Developer" : "Scanning worktrees");
-    try {
-      const out = await cmdLs({ json, all, verdicts, cwd });
-      spin?.stop();
-      console.log(out);
-    } catch (e) {
-      spin?.stop();
-      exitFrom(e);
-    }
-    process.exit(0);
+  const spin = json ? null : spinner(all ? "Scanning ~/Developer" : "Scanning worktrees");
+  try {
+    const out = await cmdLs({ json, all, verdicts, cwd });
+    spin?.stop();
+    console.log(out);
+  } catch (e) {
+    spin?.stop();
+    exitFrom(e);
   }
+  process.exit(0);
 }
 
 if (command === "reap") {

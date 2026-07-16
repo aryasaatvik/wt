@@ -22,7 +22,7 @@ Worktree task?
 ├─ New feature branch     → wt new x/my-feature
 ├─ Branch off non-main    → wt new x/my-feature develop
 ├─ Done with branch       → wt rm x/my-feature
-├─ See worktree status    → wt ls --plain  (agents: always --plain or --json)
+├─ See worktree status    → wt ls  (always inline; bare `wt` is a TTY picker — never use it)
 ├─ Fleet-wide inventory   → wt ls --all --json
 └─ Clean up landed lanes  → wt reap   (dry run; --apply to remove)
 ```
@@ -69,13 +69,13 @@ The target resolves in order: exact branch name → worktree directory name unde
 ### List
 
 ```bash
-wt ls --plain    # status table: branch, dirty, ahead/behind, PR, size, age
+wt ls            # status table: branch, dirty, ahead/behind, PR, size, age
 wt ls --json     # machine-readable records
 wt ls -v         # append reachability verdicts
 wt ls --all      # every <repo>-worktrees dir under ~/Developer, incl. stray registrations
 ```
 
-On a TTY without `--plain`/`--json`, `wt ls` opens an interactive picker (j/k move, x remove via the safety pipeline, o editor, enter print path, v verdicts, r rescan, q quit). Agents should pass `--plain` or `--json`.
+`wt ls` is always inline and safe for agents. The interactive picker (j/k move, x remove via the safety pipeline, o editor, enter print path, v verdicts, r rescan, q quit) is reserved for **bare `wt`** on a TTY — an agent must never invoke it, since it takes over the terminal and waits for keys. Bare `wt` without a TTY prints help.
 
 PR state comes from `gh` and degrades to `?`/`"unknown"` when gh is missing or offline.
 

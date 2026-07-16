@@ -5,7 +5,7 @@ Git worktree lifecycle tool: create with gitignored-file sync and dependency ins
 ## What it does
 
 1. Creates a worktree in `../<repo>-worktrees/<slug>/`, syncs all gitignored files (`.env`, `.scratchpad`, editor config, etc.) from the source repo, and installs dependencies via [`ni`](https://github.com/antfu/ni)
-2. `wt ls` shows every worktree's branch, dirty state, ahead/behind, PR state, size, and age — as an interactive picker on a TTY, a plain table when piped, `--json` for machines, `--all` for every repo under `~/Developer`
+2. `wt ls` shows every worktree's branch, dirty state, ahead/behind, PR state, size, and age as a table; `--json` for machines, `--all` for every repo under `~/Developer`. Bare `wt` on a TTY opens the same data as an interactive picker
 3. `wt rm` and `wt reap` remove worktrees through a safety pipeline that salvages unique scratchpad notes and refuses on env drift, never with `--force`
 
 ## Install
@@ -44,8 +44,8 @@ wt rm x/my-feature        # remove worktree by branch (keeps branch)
 wt rm lane-1              # remove by directory name — how detached worktrees are addressed
 wt rm ../myrepo-worktrees/lane-1   # remove by path
 wt rm x/my-feature -D     # remove worktree and delete branch
-wt ls                     # interactive picker on a TTY, table when piped
-wt ls --plain             # force the table
+wt                        # interactive picker (TTY only)
+wt ls                     # status table — always inline, stays in scrollback
 wt ls -v                  # append reachability verdicts
 wt ls --all               # sweep every <repo>-worktrees dir under ~/Developer
 wt ls --json              # machine-readable records
@@ -57,7 +57,15 @@ wt --verbose x/feature    # show rsync file list
 
 ### Interactive picker
 
-On a TTY, `wt ls` opens a picker: `j`/`k` move · `x` remove (confirms, then runs the safety pipeline — skip reasons shown inline) · `o` open in `$EDITOR` · `enter` print the worktree path and exit · `v` toggle verdicts · `r` rescan · `q` quit.
+Bare `wt` on a TTY opens the picker: `j`/`k` move · `x` remove (confirms, then runs the safety pipeline — skip reasons shown inline) · `o` open in `$EDITOR` · `enter` print the worktree path and exit · `v` toggle verdicts · `r` rescan · `q` quit.
+
+The split is deliberate: `wt` is the "look around and act" gesture and the picker owns the terminal for it, while every subcommand answers inline and leaves its output in scrollback. Piped or scripted, bare `wt` prints help rather than a picker.
+
+Since `enter` prints the selected path, the picker doubles as a jump command:
+
+```bash
+cd "$(wt)"
+```
 
 ### Removal safety
 
