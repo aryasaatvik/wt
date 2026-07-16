@@ -62,6 +62,17 @@ export function listWorktrees(cwd: string): WorktreeInfo[] {
   return entries;
 }
 
+/** origin's default branch: origin/HEAD if set, else the first of main/master/dev that exists. */
+export function originDefault(cwd: string): string | null {
+  const ref = run(["git", "-C", cwd, "symbolic-ref", "refs/remotes/origin/HEAD"]).trim();
+  if (ref) return ref.replace(/^refs\/remotes\/origin\//, "");
+  for (const cand of ["main", "master", "dev"]) {
+    const r = Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", `origin/${cand}`]);
+    if (r.exitCode === 0) return cand;
+  }
+  return null;
+}
+
 export function branchExists(cwd: string, branch: string): boolean {
   return (
     Bun.spawnSync(["git", "-C", cwd, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`])

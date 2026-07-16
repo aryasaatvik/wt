@@ -62,6 +62,19 @@ export class FixtureRepo {
     return wtDir;
   }
 
+  /**
+   * Create a bare origin at <root>/origin.git, push main, and set origin/HEAD
+   * so default-branch resolution works like a real clone.
+   */
+  addOrigin(): string {
+    const originDir = join(this.root, "origin.git");
+    this.exec(this.root, ["git", "init", "--bare", "-b", "main", originDir]);
+    this.git("remote", "add", "origin", originDir);
+    this.git("push", "-u", "origin", "main");
+    this.git("remote", "set-head", "origin", "main");
+    return originDir;
+  }
+
   rm(): void {
     rmSync(this.root, { recursive: true, force: true });
   }
