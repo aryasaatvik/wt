@@ -19,10 +19,12 @@ Requires: `git`, `rsync`, [`ni`](https://github.com/antfu/ni).
 
 ```
 Worktree task?
-├─ New feature branch    → wt new x/my-feature
-├─ Branch off non-main   → wt new x/my-feature develop
-├─ Done with branch      → wt rm x/my-feature
-└─ See active worktrees  → wt ls
+├─ New feature branch     → wt new x/my-feature
+├─ Branch off non-main    → wt new x/my-feature develop
+├─ Done with branch       → wt rm x/my-feature
+├─ See worktree status    → wt ls  (always inline; bare `wt` is a TTY picker — never use it)
+├─ Fleet-wide inventory   → wt ls --all --json
+└─ Clean up landed lanes  → wt reap   (dry run; --apply to remove)
 ```
 
 ## Commands
@@ -67,11 +69,25 @@ The target resolves in order: exact branch name → worktree directory name unde
 ### List
 
 ```bash
-wt ls
-wt list
+wt ls            # status table: branch, dirty, ahead/behind, PR, size, age
+wt ls --json     # machine-readable records
+wt ls -v         # append reachability verdicts
+wt ls --all      # every <repo>-worktrees dir under ~/Developer, incl. stray registrations
 ```
 
-Wraps `git worktree list`.
+`wt ls` is always inline and safe for agents. The interactive picker (j/k move, x remove via the safety pipeline, o editor, enter print path, v verdicts, r rescan, q quit) is reserved for **bare `wt`** on a TTY — an agent must never invoke it, since it takes over the terminal and waits for keys. Bare `wt` without a TTY prints help.
+
+PR state comes from `gh` and degrades to `?`/`"unknown"` when gh is missing or offline.
+
+### Reap
+
+```bash
+wt reap                       # dry-run report: WOULD REMOVE / SKIP / KEEP with reasons
+wt reap --apply               # remove the safe set (branches are never deleted)
+wt reap --all --older-than 14 # fleet sweep, only lanes idle >= 14 days
+```
+
+Only REACHABLE / REACHABLE_BRANCH / EMPTY / CONTENT_LANDED lanes auto-remove; the safety pipeline (scratchpad salvage, env-drift refusal, dirty refusal, TOCTOU HEAD guard) can still demote any of them to SKIP. Exit code 1 means something was skipped and needs a human.
 
 ## Options
 

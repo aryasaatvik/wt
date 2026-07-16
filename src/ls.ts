@@ -37,21 +37,21 @@ export function humanAge(iso: string | null, nowMs: number = Date.now()): string
   return `${Math.floor(sec / (86400 * 365))}y`;
 }
 
-function branchLabel(r: WorktreeStatus): string {
+export function branchLabel(r: WorktreeStatus): string {
   if (r.branch) return r.branch;
   return r.detached ? `detached@${r.head.slice(0, 7)}` : "?";
 }
 
-function dirtyLabel(r: WorktreeStatus): string {
+export function dirtyLabel(r: WorktreeStatus): string {
   return r.dirty ? `${r.dirtyCount}*` : "-";
 }
 
-function aheadBehindLabel(r: WorktreeStatus): string {
+export function aheadBehindLabel(r: WorktreeStatus): string {
   if (r.ahead === null || r.behind === null) return "-";
   return `+${r.ahead}/-${r.behind}`;
 }
 
-function prLabel(r: WorktreeStatus): string {
+export function prLabel(r: WorktreeStatus): string {
   switch (r.prState) {
     case "open":
       return `open#${r.prNumber}`;

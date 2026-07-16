@@ -13,6 +13,7 @@ import { err, ExitError } from "./ui.ts";
 const HELP = `${bold("Usage:")} wt <command> [args]
 
 ${bold("Commands:")}
+  wt                   Interactive picker (TTY only)
   wt [new|create] <branch> [base] [flags]
                        Create worktree from base branch (default: main)
                        Checks out the branch if it already exists
@@ -48,12 +49,31 @@ for (const a of process.argv.slice(2)) {
   else args.push(a);
 }
 
-if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
+if (args[0] === "-h" || args[0] === "--help") {
   console.log(HELP);
   process.exit(0);
 }
 
 const cwd = process.cwd();
+
+// Bare `wt` is the "look around" gesture: the picker owns the terminal, so it
+// only makes sense on a TTY. Every subcommand stays inline and leaves its
+// output in scrollback. Piped or scripted, bare wt is just help.
+if (args.length === 0) {
+  if (!process.stdout.isTTY) {
+    console.log(HELP);
+    process.exit(0);
+  }
+  const { runPicker } = await import("./picker.ts");
+  try {
+    await runPicker({ cwd });
+    // The renderer owns the process from here; the picker's quit() exits.
+    await new Promise(() => {});
+  } catch (e) {
+    exitFrom(e);
+  }
+}
+
 const command = args[0]!;
 
 if (command === "ls" || command === "list") {
