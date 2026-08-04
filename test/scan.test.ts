@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { originDefault } from "../src/git.ts";
-import { prStateFor, scanWorktrees, type PrInfo } from "../src/scan.ts";
+import { pickPr, prStateFor, remoteRepos, scanWorktrees, type PrInfo } from "../src/scan.ts";
 import { makeRepo } from "./harness.ts";
 
 describe("prStateFor", () => {
@@ -31,6 +31,37 @@ describe("prStateFor", () => {
       prNumber: null,
     });
     expect(prStateFor("feat/a", { prs, complete: false })).toEqual({ prState: "open", prNumber: 12 });
+  });
+});
+
+describe("pickPr", () => {
+  test("open outranks merged outranks closed", () => {
+    expect(pickPr([{ prState: "merged", prNumber: 1 }, { prState: "open", prNumber: 2 }])).toEqual({
+      prState: "open",
+      prNumber: 2,
+    });
+    expect(pickPr([{ prState: "closed", prNumber: 3 }, { prState: "merged", prNumber: 4 }])).toEqual({
+      prState: "merged",
+      prNumber: 4,
+    });
+    expect(pickPr([])).toBeNull();
+  });
+});
+
+describe("remoteRepos", () => {
+  test("parses GitHub remotes, origin first, and skips non-GitHub ones", async () => {
+    const repo = makeRepo();
+    try {
+      repo.git("remote", "add", "upstream", "https://github.com/acme/widgets.git");
+      repo.git("remote", "add", "origin", "git@github.com:me/widgets.git");
+      repo.git("remote", "add", "mirror", "https://git.example.com/me/widgets.git");
+      expect(await remoteRepos(repo.dir)).toEqual([
+        { name: "origin", nwo: "me/widgets" },
+        { name: "upstream", nwo: "acme/widgets" },
+      ]);
+    } finally {
+      repo.rm();
+    }
   });
 });
 

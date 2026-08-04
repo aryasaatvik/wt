@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyWorktree, verdictLabel } from "../src/verdict.ts";
+import { classifyWorktree, isRemovable, verdictLabel } from "../src/verdict.ts";
 import { makeRepo } from "./harness.ts";
 
 describe("classifyWorktree", () => {
@@ -15,7 +15,9 @@ describe("classifyWorktree", () => {
     }
   });
 
-  test("REACHABLE_BRANCH: tip of a pushed feature branch", async () => {
+  // The bug this split fixes: a pushed-but-unmerged lane — every open PR looks
+  // like this — used to classify as REACHABLE_BRANCH and auto-remove.
+  test("PUSHED_ONLY: tip of a pushed feature branch is durable, not landed", async () => {
     const repo = makeRepo();
     try {
       repo.addOrigin();
@@ -23,8 +25,43 @@ describe("classifyWorktree", () => {
       repo.gitIn(wt, "commit", "--allow-empty", "-m", "feature work");
       repo.gitIn(wt, "push", "-u", "origin", "feat/x");
       const v = await classifyWorktree(wt);
-      expect(v.kind).toBe("REACHABLE_BRANCH");
+      expect(v.kind).toBe("PUSHED_ONLY");
       expect(v.ref).toBe("origin/feat/x");
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("REACHABLE_BRANCH: contained in a mainline branch other than the default", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      // work that landed on dev but not yet on main
+      repo.git("checkout", "-b", "dev");
+      repo.git("commit", "--allow-empty", "-m", "landed on dev");
+      repo.git("push", "-u", "origin", "dev");
+      const devHead = repo.git("rev-parse", "HEAD").trim();
+      repo.git("checkout", "main");
+      const wt = repo.addWorktree("lane-dev", { detachAt: devHead });
+      const v = await classifyWorktree(wt);
+      expect(v.kind).toBe("REACHABLE_BRANCH");
+      expect(v.ref).toBe("origin/dev");
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("PUSHED_ONLY: detached lane left on a feature branch by a stack merge", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      const wt = repo.addWorktree("feat-stack", { branch: "feat/stack" });
+      repo.gitIn(wt, "commit", "--allow-empty", "-m", "stacked work");
+      repo.gitIn(wt, "push", "-u", "origin", "feat/stack");
+      const head = repo.gitIn(wt, "rev-parse", "HEAD").trim();
+      // a stack CLI detaches the lane after merging it
+      repo.gitIn(wt, "checkout", "--detach", head);
+      expect((await classifyWorktree(wt)).kind).toBe("PUSHED_ONLY");
     } finally {
       repo.rm();
     }
@@ -91,9 +128,44 @@ describe("classifyWorktree", () => {
     }
   });
 
-  test("verdictLabel appends merged-PR evidence", () => {
+  test("verdictLabel appends PR evidence", () => {
     expect(verdictLabel({ kind: "REACHABLE", ref: "origin/main" }, "merged", 42)).toBe(
       "REACHABLE (PR #42 merged)",
     );
+    expect(verdictLabel({ kind: "PUSHED_ONLY", ref: "origin/feat/x" }, "open", 7)).toBe(
+      "PUSHED_ONLY (PR #7 open)",
+    );
+    expect(verdictLabel({ kind: "REACHABLE", ref: "origin/main" }, "none", null)).toBe("REACHABLE");
+  });
+});
+
+describe("isRemovable", () => {
+  test("an open PR vetoes every verdict", () => {
+    for (const kind of ["REACHABLE", "REACHABLE_BRANCH", "EMPTY", "CONTENT_LANDED"] as const) {
+      expect(isRemovable(kind, "open")).toBe(false);
+    }
+  });
+
+  test("reachability tiers remove without PR evidence", () => {
+    for (const kind of ["REACHABLE", "REACHABLE_BRANCH", "EMPTY", "CONTENT_LANDED"] as const) {
+      expect(isRemovable(kind, "none")).toBe(true);
+      expect(isRemovable(kind, "unknown")).toBe(true);
+    }
+  });
+
+  test("PUSHED_ONLY removes only on a merged PR", () => {
+    expect(isRemovable("PUSHED_ONLY", "merged")).toBe(true);
+    expect(isRemovable("PUSHED_ONLY", "open")).toBe(false);
+    expect(isRemovable("PUSHED_ONLY", "closed")).toBe(false);
+    expect(isRemovable("PUSHED_ONLY", "none")).toBe(false);
+    // a failed gh lookup must not read as "no PR, go ahead"
+    expect(isRemovable("PUSHED_ONLY", "unknown")).toBe(false);
+  });
+
+  test("STRANDED and edge verdicts never remove, merged PR or not", () => {
+    for (const kind of ["STRANDED", "NO_REMOTE_REF", "NO_MERGE_BASE", "PROBE_FAILED"] as const) {
+      expect(isRemovable(kind, "merged")).toBe(false);
+      expect(isRemovable(kind, "none")).toBe(false);
+    }
   });
 });

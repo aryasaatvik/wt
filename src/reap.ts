@@ -1,9 +1,10 @@
 // wt reap — report (default) and remove (--apply) safely-reapable worktrees.
 //
-// Policy (locked 2026-07-15): only REACHABLE / REACHABLE_BRANCH / EMPTY /
-// CONTENT_LANDED lanes may auto-remove, and the safety pipeline can still
-// demote any of them to SKIP. STRANDED and edge verdicts never auto-remove.
-// Reap never deletes branches.
+// Policy (see isRemovable in verdict.ts): REACHABLE / REACHABLE_BRANCH /
+// EMPTY / CONTENT_LANDED auto-remove; PUSHED_ONLY needs a merged PR; an open
+// PR vetoes every verdict. The safety pipeline can still demote any of them to
+// SKIP. STRANDED and edge verdicts never auto-remove. Reap never deletes
+// branches.
 
 import { basename, dirname, join } from "node:path";
 import { discoverPrimaries, humanSize } from "./ls.ts";
@@ -12,7 +13,7 @@ import { runSafetyPipeline, type SafetyResult } from "./safety.ts";
 import { scanWorktrees, type ScanOptions, type WorktreeStatus } from "./scan.ts";
 import { bold, dim, gray, green, pool, red, runAsync, yellow } from "./term.ts";
 import { err, ExitError } from "./ui.ts";
-import { AUTO_REMOVABLE, classifyWorktree, verdictLabel, type Verdict } from "./verdict.ts";
+import { classifyWorktree, isRemovable, verdictLabel, type Verdict } from "./verdict.ts";
 
 export type Disposition = "remove" | "skip" | "keep";
 
@@ -57,8 +58,12 @@ async function planRepo(repoRoot: string, opts: ReapOptions): Promise<ReapEntry[
       }
       const verdict = await classifyWorktree(record.path);
       const verdictText = verdictLabel(verdict, record.prState, record.prNumber);
-      if (!AUTO_REMOVABLE.has(verdict.kind)) {
-        return { ...base, verdict, verdictText, disposition: "keep", reasons: [verdictText] };
+      if (!isRemovable(verdict.kind, record.prState)) {
+        const reason =
+          record.prState === "open"
+            ? `open PR #${record.prNumber} — active lane (${verdict.kind})`
+            : verdictText;
+        return { ...base, verdict, verdictText, disposition: "keep", reasons: [reason] };
       }
       if (cutoffMs !== null) {
         const lastCommitMs = record.lastCommitAt ? Date.parse(record.lastCommitAt) : Number.NaN;
