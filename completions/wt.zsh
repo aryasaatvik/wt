@@ -53,24 +53,26 @@ _wt_branches() {
 # rm targets: worktree branches plus directory names (how detached worktrees
 # are addressed). The primary worktree is excluded.
 _wt_worktree_targets() {
+  # Never name a local `path`: in zsh it is tied to PATH, so `local path=""`
+  # empties PATH for the rest of this function and hides git/coreutils.
   local -a targets
   local primary=""
-  local path="" branch=""
+  local worktree_dir="" branch=""
   while IFS= read -r line; do
     case "$line" in
       "worktree "*)
-        path="${line#worktree }"
-        [[ -z "$primary" ]] && primary="$path" && path=""
+        worktree_dir="${line#worktree }"
+        [[ -z "$primary" ]] && primary="$worktree_dir" && worktree_dir=""
         ;;
       "branch refs/heads/"*)
         branch="${line#branch refs/heads/}"
         ;;
       "")
-        if [[ -n "$path" ]]; then
+        if [[ -n "$worktree_dir" ]]; then
           [[ -n "$branch" ]] && targets+=("$branch")
-          targets+=("${path:t}")
+          targets+=("${worktree_dir:t}")
         fi
-        path="" branch=""
+        worktree_dir="" branch=""
         ;;
     esac
   done < <(git worktree list --porcelain 2>/dev/null; echo)
