@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { cmdRm } from "../src/rm.ts";
-import { describeEnvDrift, envKeys, isEnvFile, runSafetyPipeline } from "../src/safety.ts";
+import { describeEnvDrift, envKeys, runSafetyPipeline } from "../src/safety.ts";
+import { isEnvFile } from "../src/sync.ts";
 import { makeRepo, type FixtureRepo } from "./harness.ts";
 
 function writeIn(_repo: FixtureRepo, dir: string, rel: string, content: string, mtime?: Date) {

@@ -50,7 +50,7 @@ Creates worktree at `../<repo>-worktrees/<slug>/` where slashes in the branch na
 
 Steps performed:
 1. `git worktree add -b <branch> <path> <base>`
-2. Sync all gitignored files (env, scratchpad, editor config, etc.) via rsync
+2. Sync gitignored config (env, scratchpad, editor/agent settings) via rsync
 3. Run `ni` to install dependencies when a lockfile or `packageManager` field identifies the package manager
 
 ### Remove
@@ -101,18 +101,18 @@ Only REACHABLE / REACHABLE_BRANCH / EMPTY / CONTENT_LANDED lanes auto-remove; th
 
 ## File Sync
 
-The sync step copies all gitignored files from the source repo to the worktree, **excluding** heavy artifacts defined in `SYNC_EXCLUDE` (`src/sync.ts`):
+The sync step copies gitignored **config** from the source repo, not every ignored file. Allowlist (`src/sync.ts`):
 
-- **JS/TS**: `node_modules`, `.next`, `.turbo`, `dist`, `.vercel`, `.cache`
-- **Infra**: `.sst`, `.wrangler`
-- **Xcode/Swift**: `build`, `.build`, `DerivedData`, `Pods`, `Carthage`, `xcuserdata`
-- **Agent/tooling state**: `.claude/worktrees`, `.conductor`, `.playwright`
+- **Env**: `.env`, `.env.*`, `.dev.vars` (never `*.example`)
+- **Scratchpad**: `.scratchpad/`
+- **Editor**: `.vscode/`, `.idea/`, `.zed/`
+- **Agent**: `.claude/` except `.claude/worktrees`
 
-Entries match path components as prefixes (`DerivedData` also catches `DerivedDataDevice`). Edit `SYNC_EXCLUDE` in `src/sync.ts` to customize.
+Listing uses those pathspecs, so artifact trees (`apps/e2e/runs/`, `.alchemy/`) are never candidates. `SYNC_EXCLUDE` is a backstop for allowlisted paths that must stay lane-local. Dangling allowlisted symlinks are recreated as links; they are not passed to rsync (macOS openrsync fails `stat()` on a missing target).
 
 Creation also writes a provenance marker (`.git/worktrees/<name>/wt.json` in the primary) recording the branch, base, and the list of synced files.
 
-If file sync fails, `wt` exits nonzero and prints the captured `rsync` error output.
+If file sync fails, `wt` exits nonzero and prints the captured error output.
 
 ## Known Gotchas
 

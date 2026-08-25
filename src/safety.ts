@@ -5,6 +5,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { readProvenance } from "./create.ts";
+import { isEnvFile } from "./sync.ts";
 import { runAsync } from "./term.ts";
 
 export interface SafetyFlag {
@@ -25,15 +26,6 @@ export interface SafetyOptions {
   dryRun?: boolean;
   /** date stamp for the salvage archive dir (tests pin it) */
   date?: string;
-}
-
-const ENV_BASENAME = /^(\.env(\..+)?|\.dev\.vars)$/;
-
-/** Env file = .env, .env.*, .dev.vars — but never *.example. */
-export function isEnvFile(rel: string): boolean {
-  const name = basename(rel);
-  if (name.endsWith(".example")) return false;
-  return ENV_BASENAME.test(name);
 }
 
 /** Key NAMES of KEY=... lines. Values never leave this function. */

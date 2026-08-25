@@ -4,7 +4,7 @@ Git worktree lifecycle tool: create with gitignored-file sync and dependency ins
 
 ## What it does
 
-1. Creates a worktree in `../<repo>-worktrees/<slug>/`, syncs all gitignored files (`.env`, `.scratchpad`, editor config, etc.) from the source repo, and installs dependencies via [`ni`](https://github.com/antfu/ni)
+1. Creates a worktree in `../<repo>-worktrees/<slug>/`, syncs gitignored config (`.env`, `.scratchpad`, editor/agent settings) from the source repo, and installs dependencies via [`ni`](https://github.com/antfu/ni)
 2. `wt ls` shows every worktree's branch, dirty state, ahead/behind, PR state, size, and age as a table; `--json` for machines, `--all` for every repo under `~/Developer`. Bare `wt` on a TTY opens the same data as an interactive picker
 3. `wt rm` and `wt reap` remove worktrees through a safety pipeline that salvages unique scratchpad notes and refuses on env drift, never with `--force`
 
@@ -97,16 +97,18 @@ Branch slashes are converted to dashes for the directory name.
 
 ### File sync
 
-All gitignored files are synced except heavy artifacts:
+`wt new` copies gitignored **config**, not every ignored file. The allowlist is:
 
-- **JS/TS**: `node_modules`, `.next`, `.turbo`, `dist`, `.vercel`, `.cache`
-- **Infra**: `.sst`, `.wrangler`
-- **Xcode/Swift**: `build`, `.build`, `DerivedData`, `Pods`, `Carthage`, `xcuserdata`
-- **Agent/tooling state**: `.claude/worktrees`, `.conductor`, `.playwright`
+- **Env**: `.env`, `.env.*`, `.dev.vars` (never `*.example`), at any depth
+- **Scratchpad**: `.scratchpad/`
+- **Editor**: `.vscode/`, `.idea/`, `.zed/`
+- **Agent**: `.claude/` except `.claude/worktrees`
 
-Entries match path components as prefixes (`DerivedData` also excludes `DerivedDataDevice`). Edit `SYNC_EXCLUDE` in `src/sync.ts` to customize.
+`git ls-files` is constrained to those pathspecs, so ignored artifact trees (`apps/e2e/runs/`, `.alchemy/`, `node_modules`, …) are never listed. `SYNC_EXCLUDE` remains a backstop for allowlisted paths that still must stay lane-local (`.claude/worktrees`, `node_modules`, `.playwright`, …). Prefix matching still applies to directory components (`DerivedData` also excludes `DerivedDataDevice`).
 
-If file sync fails, `wt` exits nonzero and prints the captured `rsync` error output.
+Dangling symlinks on the allowlist are recreated with `symlink` rather than handed to rsync. macOS openrsync `stat()`s the missing target and would otherwise fail the whole create (rsync exit 23).
+
+If file sync fails, `wt` exits nonzero and prints the captured error output.
 
 ## Agent integration
 

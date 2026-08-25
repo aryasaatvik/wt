@@ -1,9 +1,9 @@
-// wt new — create a worktree, sync gitignored files, install dependencies.
+// wt new — create a worktree, sync gitignored config, install dependencies.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { branchExists, resolvePrimaryRepo } from "./git.ts";
-import { computeSyncFiles, rsyncFiles } from "./sync.ts";
+import { computeSyncFiles, syncFiles } from "./sync.ts";
 import { bold, dim, run, runAsync, spinner } from "./term.ts";
 import { detail, err, ExitError, info, log } from "./ui.ts";
 
@@ -97,7 +97,7 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
     synced = await computeSyncFiles(repoRoot, wtDir);
     if (synced.length > 0) {
       syncSpin.update(`Syncing ${synced.length} files`);
-      await rsyncFiles(repoRoot, wtDir, synced, opts.verbose);
+      synced = await syncFiles(repoRoot, wtDir, synced, opts.verbose);
     }
     syncSpin.stop();
     if (synced.length === 0) log("No gitignored files to sync");

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readlinkSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { cmdNew, readProvenance } from "../src/create.ts";
 import { resolvePrimaryRepo } from "../src/git.ts";
@@ -8,30 +8,48 @@ import { makeRepo } from "./harness.ts";
 const OPTS = { verbose: false, install: false, extraFlags: [] };
 
 describe("cmdNew", () => {
-  test("creates the worktree, syncs ignored files, skips excluded artifacts", async () => {
+  test("creates the worktree, syncs config, skips artifacts and dangling e2e links", async () => {
     const repo = makeRepo();
     try {
-      repo.write(".gitignore", ".env\nnode_modules/\nDerivedData*/\n.scratchpad/\n");
+      repo.write(".gitignore", ".env\n.env.*\nnode_modules/\nDerivedData*/\n.scratchpad/\nruns/\n");
       repo.commit("gitignore");
       repo.write(".env", "SECRET=1\n");
       repo.write(".scratchpad/note.md", "note\n");
       repo.write("node_modules/pkg/index.js", "x\n");
       repo.write("DerivedDataDevice/db.bin", "x\n");
+      repo.write("runs/local/artifact.bin", "heavy\n");
+      mkdirSync(join(repo.dir, "runs/local"), { recursive: true });
+      symlinkSync(
+        "_runs/missing/artifacts",
+        join(repo.dir, "runs/local/billing-refund-permanent-ses-rejection-releases-the-reserved-autumn-unit"),
+      );
+      symlinkSync("missing-env-target", join(repo.dir, ".env.broken"));
 
       const wtDir = await cmdNew("feat/sync-test", "main", { ...OPTS, cwd: repo.dir });
 
       expect(wtDir).toBe(join(repo.root, "repo-worktrees", "feat-sync-test"));
       expect(existsSync(join(wtDir, ".env"))).toBe(true);
       expect(existsSync(join(wtDir, ".scratchpad/note.md"))).toBe(true);
+      expect(lstatSync(join(wtDir, ".env.broken")).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(join(wtDir, ".env.broken"))).toBe("missing-env-target");
       expect(existsSync(join(wtDir, "node_modules"))).toBe(false);
       expect(existsSync(join(wtDir, "DerivedDataDevice"))).toBe(false);
+      expect(existsSync(join(wtDir, "runs/local/artifact.bin"))).toBe(false);
+      expect(
+        () =>
+          lstatSync(
+            join(wtDir, "runs/local/billing-refund-permanent-ses-rejection-releases-the-reserved-autumn-unit"),
+          ),
+      ).toThrow();
       expect(repo.gitIn(wtDir, "branch", "--show-current").trim()).toBe("feat/sync-test");
 
       const marker = readProvenance(wtDir);
       expect(marker?.branch).toBe("feat/sync-test");
       expect(marker?.base).toBe("main");
       expect(marker?.syncedFiles).toContain(".env");
+      expect(marker?.syncedFiles).toContain(".env.broken");
       expect(marker?.syncedFiles).not.toContain("node_modules/pkg/index.js");
+      expect(marker?.syncedFiles).not.toContain("runs/local/artifact.bin");
     } finally {
       repo.rm();
     }

@@ -1,8 +1,8 @@
 // wt — git worktree helper.
 //
 // Creates worktrees as siblings of the repo (`../<repo>-worktrees/<slug>/`,
-// branch slashes → dashes), syncs gitignored files (env, .scratchpad, editor
-// config) from the source repo, and installs dependencies via `ni`.
+// branch slashes → dashes), syncs gitignored config (env, .scratchpad, editor
+// settings) from the source repo, and installs dependencies via `ni`.
 
 import { cmdNew } from "./create.ts";
 import { cmdLs } from "./ls.ts";
