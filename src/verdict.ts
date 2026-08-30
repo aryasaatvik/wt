@@ -43,40 +43,32 @@ export const REMOVABLE_WITH_MERGED_PR: ReadonlySet<VerdictKind> = new Set(["PUSH
 
 /**
  * The whole removal policy in one place: git reachability and PR state are
- * separate evidence axes, and an open PR vetoes both. A lane whose PR is open
- * is live work no matter how reachable its commits are.
+ * separate evidence axes. Open and unknown PR states veto both: a lane whose
+ * PR is open is live work, and a failed or incomplete lookup is not consent to
+ * remove anything.
  */
 export function isRemovable(kind: VerdictKind, prState: PrState): boolean {
-  if (prState === "open") return false;
+  if (prState === "open" || prState === "unknown") return false;
   if (AUTO_REMOVABLE.has(kind)) return true;
   return REMOVABLE_WITH_MERGED_PR.has(kind) && prState === "merged";
 }
 
 /**
- * Remote branches that carry landed work: each remote's HEAD plus the
- * conventional long-lived names. Containment in one of these is real evidence
- * a commit merged; containment in a feature branch only proves it was pushed.
+ * Long-lived branches on origin. origin is already the authoritative remote
+ * used by originDefault; conventional branches on forks and backup remotes are
+ * not landing evidence.
  */
-async function mainlineRefs(wtPath: string): Promise<Set<string>> {
+async function originMainlineRefs(wtPath: string): Promise<Set<string>> {
   const g = (...args: string[]) => runAsync(["git", "-C", wtPath, ...args]);
-  const remotesRes = await g("remote");
-  if (!remotesRes.ok) return new Set();
-  const remotes = remotesRes.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
   const refs = new Set<string>();
+  const head = await g("symbolic-ref", "-q", "refs/remotes/origin/HEAD");
+  if (head.ok && head.stdout.trim()) {
+    refs.add(head.stdout.trim().replace(/^refs\/remotes\//, ""));
+  }
   await Promise.all(
-    remotes.map(async (remote) => {
-      const head = await g("symbolic-ref", "-q", `refs/remotes/${remote}/HEAD`);
-      if (head.ok && head.stdout.trim()) {
-        refs.add(head.stdout.trim().replace(/^refs\/remotes\//, ""));
-      }
-      // Probe the conventional names too: a remote's HEAD may be unset, and a
-      // fork can carry both main and dev as mainlines.
-      await Promise.all(
-        ["main", "master", "dev"].map(async (name) => {
-          const r = await g("rev-parse", "--verify", "-q", `refs/remotes/${remote}/${name}`);
-          if (r.ok) refs.add(`${remote}/${name}`);
-        }),
-      );
+    ["main", "master", "dev"].map(async (name) => {
+      const r = await g("rev-parse", "--verify", "-q", `refs/remotes/origin/${name}`);
+      if (r.ok) refs.add(`origin/${name}`);
     }),
   );
   return refs;
@@ -102,7 +94,7 @@ export async function classifyWorktree(wtPath: string): Promise<Verdict> {
     ? containing.stdout.split("\n").map((l) => l.trim()).filter((l) => l && !l.includes("->"))
     : [];
   if (remoteBranches.length > 0) {
-    const mainlines = await mainlineRefs(wtPath);
+    const mainlines = await originMainlineRefs(wtPath);
     const landed = remoteBranches.find((b) => mainlines.has(b));
     if (landed) return { kind: "REACHABLE_BRANCH", ref: landed };
     return { kind: "PUSHED_ONLY", ref: remoteBranches[0]! };

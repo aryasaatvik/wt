@@ -82,7 +82,7 @@ cd "$(wt)"
 - env files (`.env`, `.env.*`, `.dev.vars` — never `*.example`) that differ from the primary block removal; drift is reported as key **names** only, values are never printed
 - dirty or status-unreadable worktrees block removal
 
-`wt reap` classifies each worktree's reachability — `REACHABLE`, `REACHABLE_BRANCH`, `EMPTY`, `CONTENT_LANDED` (squash-merge detection), `STRANDED(n/m)` — and only the first four tiers ever auto-remove.
+`wt reap` distinguishes landed commits from `PUSHED_ONLY` feature work. An open or unknown PR state vetoes every automatic removal; `PUSHED_ONLY` requires a confirmed merged PR. Otherwise only `REACHABLE`, `REACHABLE_BRANCH`, `EMPTY`, and `CONTENT_LANDED` (squash-merge detection) can auto-remove.
 
 ### Worktree layout
 

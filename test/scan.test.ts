@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { originDefault } from "../src/git.ts";
-import { pickPr, prStateFor, remoteRepos, scanWorktrees, type PrInfo } from "../src/scan.ts";
+import { pickPr, prForCommit, prStateFor, remoteRepos, scanWorktrees, type PrInfo } from "../src/scan.ts";
 import { makeRepo } from "./harness.ts";
 
 describe("prStateFor", () => {
@@ -59,6 +59,39 @@ describe("remoteRepos", () => {
         { name: "origin", nwo: "me/widgets" },
         { name: "upstream", nwo: "acme/widgets" },
       ]);
+    } finally {
+      repo.rm();
+    }
+  });
+});
+
+describe("prForCommit", () => {
+  test("keeps the result unknown when any remote lookup fails", async () => {
+    const repo = makeRepo();
+    try {
+      const bin = join(repo.root, "bin");
+      mkdirSync(bin);
+      const gh = join(bin, "gh");
+      writeFileSync(
+        gh,
+        `#!/bin/sh
+case "$2" in
+  repos/acme/widgets/*) printf '4\\tmerged\\n' ;;
+  *) exit 1 ;;
+esac
+`,
+      );
+      chmodSync(gh, 0o755);
+      expect(
+        await prForCommit(
+          [
+            { name: "origin", nwo: "acme/widgets" },
+            { name: "backup", nwo: "me/widgets" },
+          ],
+          "abc123",
+          { PATH: `${bin}:/usr/bin:/bin` },
+        ),
+      ).toEqual({ prState: "unknown", prNumber: null });
     } finally {
       repo.rm();
     }
@@ -201,6 +234,48 @@ describe("scanWorktrees", () => {
       repo.addOrigin();
       const records = await scanWorktrees(repo.dir, { env: { PATH: "/usr/bin:/bin" } });
       expect(records[0]?.prState).toBe("unknown");
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("resolves a truncated branch-list miss by commit", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      repo.git("remote", "set-url", "origin", "https://github.com/acme/widgets.git");
+      const lane = repo.addWorktree("feat-live", { branch: "feat/live" });
+      repo.gitIn(lane, "commit", "--allow-empty", "-m", "live work");
+
+      const bin = join(repo.root, "bin");
+      mkdirSync(bin);
+      const gh = join(bin, "gh");
+      writeFileSync(
+        gh,
+        `#!/bin/sh
+if [ "$1" = "pr" ]; then
+  printf '['
+  i=1
+  while [ "$i" -le 1000 ]; do
+    [ "$i" -gt 1 ] && printf ','
+    printf '{"headRefName":"archive/%s","state":"CLOSED","number":%s}' "$i" "$i"
+    i=$((i + 1))
+  done
+  printf ']\\n'
+else
+  printf '42\\topen\\n'
+fi
+`,
+      );
+      chmodSync(gh, 0o755);
+
+      const records = await scanWorktrees(repo.dir, {
+        env: { PATH: `${bin}:/usr/bin:/bin` },
+        sizeMode: "skip",
+      });
+      const live = records.find((r) => r.slug === "feat-live");
+      expect(live?.prState).toBe("open");
+      expect(live?.prNumber).toBe(42);
     } finally {
       repo.rm();
     }

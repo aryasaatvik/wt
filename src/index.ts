@@ -34,7 +34,8 @@ ${bold("Commands:")}
                        --no-size  skip size measurement entirely
   wt reap [flags]       Report reapable worktrees (dry run by default)
                        Auto-removable: REACHABLE, REACHABLE_BRANCH, EMPTY,
-                       CONTENT_LANDED — never dirty/env-drifted/stranded lanes
+                       CONTENT_LANDED; open/unknown PR state always vetoes
+                       PUSHED_ONLY requires a confirmed merged PR
                        --apply             remove them (branches are kept)
                        --all               sweep every repo under ~/Developer
                        --older-than <days> only lanes with older last commits

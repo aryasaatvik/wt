@@ -149,7 +149,9 @@ export function pickPr(
  * PRs associated with a commit, across every GitHub remote. This is the only
  * mapping that works for a detached lane — it has no branch for a headRefName
  * match, which is exactly how a stack CLI leaves a worktree after it merges.
- * Returns null when nothing could be resolved, so callers keep their old value.
+ * Returns unknown when any remote lookup fails, because partial evidence must
+ * not authorize removal. An open result is safe to return even from a partial
+ * lookup because it vetoes removal. Returns null only when gh is unavailable.
  */
 export async function prForCommit(
   repos: RemoteRepo[],
@@ -159,6 +161,7 @@ export async function prForCommit(
 ): Promise<{ prState: PrState; prNumber: number | null } | null> {
   if (!Bun.which("gh", { PATH: env.PATH ?? "" })) return null;
   const candidates: Array<{ prState: PrState; prNumber: number }> = [];
+  let complete = true;
   for (const { nwo } of repos) {
     try {
       const p = Bun.spawn(
@@ -174,8 +177,10 @@ export async function prForCommit(
       const timer = setTimeout(() => p.kill(), timeoutMs);
       const [stdout, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
       clearTimeout(timer);
-      // 404/422 (unpushed commit, no access) is a normal answer here, not an error
-      if (code !== 0) continue;
+      if (code !== 0) {
+        complete = false;
+        continue;
+      }
       for (const line of stdout.split("\n").filter(Boolean)) {
         const [num, state] = line.split("\t");
         const prState = String(state).toLowerCase();
@@ -183,10 +188,13 @@ export async function prForCommit(
         candidates.push({ prState, prNumber: Number(num) });
       }
     } catch {
-      // gh missing mid-scan or spawn failure — try the next remote
+      complete = false;
     }
   }
-  return candidates.length > 0 ? pickPr(candidates) : null;
+  const best = pickPr(candidates);
+  if (best?.prState === "open") return best;
+  if (!complete) return { prState: "unknown", prNumber: null };
+  return best ?? { prState: "none", prNumber: null };
 }
 
 // du over a big node_modules tree is the dominant cost of a scan, and sizes
@@ -312,14 +320,14 @@ export async function scanWorktrees(cwd: string, opts: ScanOptions = {}): Promis
   const listing = await prsPromise;
   const records = probed.map((r) => ({ ...r, ...prStateFor(r.branch, listing) }));
 
-  // Branch matching is blind to detached lanes and to PRs opened on a remote
-  // other than origin. Both read as "none", which is the most dangerous answer
-  // a removal tool can get — re-ask by commit before believing it.
+  // Branch matching is blind to detached lanes, PRs opened on another remote,
+  // and misses in truncated listings. Re-ask both "none" and "unknown" by
+  // commit; unresolved unknown remains a removal veto.
   if (opts.resolvePrsByCommit === false) return records;
   const repos = await remoteRepos(repoRoot);
   if (repos.length === 0) return records;
   return pool(records, opts.concurrency ?? 10, async (r) => {
-    if (r.primary || r.prState !== "none") return r;
+    if (r.primary || (r.prState !== "none" && r.prState !== "unknown")) return r;
     const resolved = await prForCommit(repos, r.head, opts.env ?? process.env);
     return resolved ? { ...r, ...resolved } : r;
   });

@@ -2,9 +2,9 @@
 //
 // Policy (see isRemovable in verdict.ts): REACHABLE / REACHABLE_BRANCH /
 // EMPTY / CONTENT_LANDED auto-remove; PUSHED_ONLY needs a merged PR; an open
-// PR vetoes every verdict. The safety pipeline can still demote any of them to
-// SKIP. STRANDED and edge verdicts never auto-remove. Reap never deletes
-// branches.
+// or unknown PR vetoes every verdict. The safety pipeline can still demote any
+// of them to SKIP. STRANDED and edge verdicts never auto-remove. Reap never
+// deletes branches.
 
 import { basename, dirname, join } from "node:path";
 import { discoverPrimaries, humanSize } from "./ls.ts";
@@ -62,7 +62,9 @@ async function planRepo(repoRoot: string, opts: ReapOptions): Promise<ReapEntry[
         const reason =
           record.prState === "open"
             ? `open PR #${record.prNumber} — active lane (${verdict.kind})`
-            : verdictText;
+            : record.prState === "unknown"
+              ? `PR state unknown — keeping (${verdict.kind})`
+              : verdictText;
         return { ...base, verdict, verdictText, disposition: "keep", reasons: [reason] };
       }
       if (cutoffMs !== null) {

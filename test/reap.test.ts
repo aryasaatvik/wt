@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { branchExists } from "../src/git.ts";
 import { applyReap, planReap, renderReapReport, type ReapEntry } from "../src/reap.ts";
@@ -40,12 +40,21 @@ async function buildFixture(repo: FixtureRepo) {
 const dispositionOf = (entries: ReapEntry[], slug: string) =>
   entries.find((e) => e.record.slug === slug)!;
 
+function conclusiveNoPrScan(repo: FixtureRepo) {
+  const bin = join(repo.root, "bin");
+  mkdirSync(bin, { recursive: true });
+  const gh = join(bin, "gh");
+  writeFileSync(gh, "#!/bin/sh\nprintf '[]\\n'\n");
+  chmodSync(gh, 0o755);
+  return { env: { PATH: `${bin}:/usr/bin:/bin` } };
+}
+
 describe("wt reap", () => {
   test("plans dispositions and --apply removes only the safe set", async () => {
     const repo = makeRepo();
     try {
       const lanes = await buildFixture(repo);
-      const entries = await planReap({ all: false, cwd: repo.dir });
+      const entries = await planReap({ all: false, cwd: repo.dir, scan: conclusiveNoPrScan(repo) });
 
       expect(dispositionOf(entries, "lane-reachable").disposition).toBe("remove");
       expect(dispositionOf(entries, "feat-stranded").disposition).toBe("keep");
@@ -84,7 +93,7 @@ describe("wt reap", () => {
       repo.addOrigin();
       const head = repo.git("rev-parse", "HEAD").trim();
       const lane = repo.addWorktree("lane-toctou", { detachAt: head });
-      const entries = await planReap({ all: false, cwd: repo.dir });
+      const entries = await planReap({ all: false, cwd: repo.dir, scan: conclusiveNoPrScan(repo) });
       expect(dispositionOf(entries, "lane-toctou").disposition).toBe("remove");
 
       repo.gitIn(lane, "commit", "--allow-empty", "-m", "raced in after the scan");
@@ -109,7 +118,12 @@ describe("wt reap", () => {
       repo.addOrigin();
       const head = repo.git("rev-parse", "HEAD").trim();
       repo.addWorktree("lane-young", { detachAt: head });
-      const entries = await planReap({ all: false, cwd: repo.dir, olderThanDays: 1 });
+      const entries = await planReap({
+        all: false,
+        cwd: repo.dir,
+        olderThanDays: 1,
+        scan: conclusiveNoPrScan(repo),
+      });
       const young = dispositionOf(entries, "lane-young");
       expect(young.disposition).toBe("keep");
       expect(young.reasons.join(" ")).toContain("newer than 1d");
@@ -126,7 +140,7 @@ describe("wt reap", () => {
       const lane = repo.addWorktree("lane-notes", { detachAt: head });
       write(lane, ".scratchpad/notes/finding.md", "important\n");
 
-      const entries = await planReap({ all: false, cwd: repo.dir });
+      const entries = await planReap({ all: false, cwd: repo.dir, scan: conclusiveNoPrScan(repo) });
       expect(dispositionOf(entries, "lane-notes").disposition).toBe("remove");
 
       const applied = await applyReap(entries);
@@ -136,6 +150,25 @@ describe("wt reap", () => {
       expect(existsSync(archive)).toBe(true);
       const report = renderReapReport(entries, true, applied);
       expect(report).toContain("salvage: .scratchpad/notes/finding.md");
+    } finally {
+      repo.rm();
+    }
+  }, 30000);
+
+  test("keeps a reachable lane when PR state cannot be determined", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      const head = repo.git("rev-parse", "HEAD").trim();
+      repo.addWorktree("lane-unknown", { detachAt: head });
+      const entries = await planReap({
+        all: false,
+        cwd: repo.dir,
+        scan: { env: { PATH: "/usr/bin:/bin" } },
+      });
+      const unknown = dispositionOf(entries, "lane-unknown");
+      expect(unknown.disposition).toBe("keep");
+      expect(unknown.reasons).toEqual(["PR state unknown — keeping (REACHABLE)"]);
     } finally {
       repo.rm();
     }

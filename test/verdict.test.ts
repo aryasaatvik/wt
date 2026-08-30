@@ -51,6 +51,23 @@ describe("classifyWorktree", () => {
     }
   });
 
+  test("PUSHED_ONLY: conventional branches on backup remotes are not landing evidence", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      const wt = repo.addWorktree("feat-backup", { branch: "feat/backup" });
+      repo.gitIn(wt, "commit", "--allow-empty", "-m", "unlanded backup");
+      const head = repo.gitIn(wt, "rev-parse", "HEAD").trim();
+      repo.git("remote", "add", "backup", "https://github.com/me/widgets.git");
+      repo.git("update-ref", "refs/remotes/backup/main", head);
+      const v = await classifyWorktree(wt);
+      expect(v.kind).toBe("PUSHED_ONLY");
+      expect(v.ref).toBe("backup/main");
+    } finally {
+      repo.rm();
+    }
+  });
+
   test("PUSHED_ONLY: detached lane left on a feature branch by a stack merge", async () => {
     const repo = makeRepo();
     try {
@@ -146,10 +163,10 @@ describe("isRemovable", () => {
     }
   });
 
-  test("reachability tiers remove without PR evidence", () => {
+  test("reachability tiers remove only when PR lookup is conclusive", () => {
     for (const kind of ["REACHABLE", "REACHABLE_BRANCH", "EMPTY", "CONTENT_LANDED"] as const) {
       expect(isRemovable(kind, "none")).toBe(true);
-      expect(isRemovable(kind, "unknown")).toBe(true);
+      expect(isRemovable(kind, "unknown")).toBe(false);
     }
   });
 
