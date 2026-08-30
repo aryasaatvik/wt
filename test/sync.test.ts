@@ -191,3 +191,20 @@ test("applySyncPlan preserves a target created after planning", async () => {
     repo.rm();
   }
 });
+
+test("applySyncPlan does not copy beneath a late target directory", async () => {
+  const repo = makeRepo();
+  try {
+    repo.write(".gitignore", ".env\n");
+    repo.write(".worktreeinclude", ".env\n");
+    repo.commit("policy");
+    const target = repo.addWorktree("lane", { branch: "lane" });
+    repo.write(".env", "source\n");
+    const plan = await planSync(repo.dir, target, { config: { requireInclude: false, exclude: [] } });
+    mkdirSync(join(target, ".env"));
+    await expect(applySyncPlan(plan)).rejects.toThrow();
+    expect(existsSync(join(target, ".env/.env"))).toBe(false);
+  } finally {
+    repo.rm();
+  }
+});

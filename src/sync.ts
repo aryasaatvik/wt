@@ -1,5 +1,7 @@
 import {
   existsSync,
+  copyFileSync,
+  constants,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -219,7 +221,7 @@ export function classifyCopy(repoRoot: string, rel: string): CopyKind {
   const abs = join(repoRoot, rel);
   try {
     const stat = lstatSync(abs);
-    return stat.isSymbolicLink() && !existsSync(abs) ? "symlink" : "rsync";
+    return stat.isSymbolicLink() ? "symlink" : "rsync";
   } catch { return "skip"; }
 }
 
@@ -227,31 +229,29 @@ function copyDanglingSymlink(repoRoot: string, wtDir: string, rel: string, force
   const dest = join(wtDir, rel);
   mkdirSync(dirname(dest), { recursive: true });
   if (force && lstatExists(dest)) rmSync(dest);
-  symlinkSync(readlinkSync(join(repoRoot, rel)), dest);
+  try {
+    symlinkSync(readlinkSync(join(repoRoot, rel)), dest);
+  } catch (e) {
+    if (!force && (e as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`target changed while copying: ${rel}`);
+    throw e;
+  }
 }
 
-async function rsyncOne(repoRoot: string, wtDir: string, rel: string, verbose: boolean, force: boolean): Promise<void> {
+function copyOne(repoRoot: string, wtDir: string, rel: string, verbose: boolean, force: boolean): void {
   const dest = join(wtDir, rel);
   mkdirSync(dirname(dest), { recursive: true });
-  const result = await runAsync([
-    "rsync", verbose ? "-av" : "-a", ...(force ? [] : ["--ignore-existing"]), "--", join(repoRoot, rel), dest,
-  ]);
-  if (!result.ok) throw new Error(result.stderr || `rsync exited ${result.code}`);
+  try {
+    copyFileSync(join(repoRoot, rel), dest, force ? 0 : constants.COPYFILE_EXCL);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (!force && (code === "EEXIST" || code === "EISDIR")) throw new Error(`target changed while copying: ${rel}`);
+    throw e;
+  }
+  if (verbose) console.log(rel);
 }
 
 export async function rsyncFiles(repoRoot: string, wtDir: string, files: string[], verbose: boolean, force = false): Promise<void> {
-  if (files.length === 0) return;
-  const newlinePaths = files.filter((path) => path.includes("\n") || path.includes("\r"));
-  const batchPaths = files.filter((path) => !newlinePaths.includes(path));
-  for (const path of newlinePaths) await rsyncOne(repoRoot, wtDir, path, verbose, force);
-  if (batchPaths.length === 0) return;
-  const p = Bun.spawn(["rsync", verbose ? "-av" : "-a", ...(force ? [] : ["--ignore-existing"]), "--files-from=-", `${repoRoot}/`, `${wtDir}/`], {
-    stdin: "pipe", stdout: verbose ? "inherit" : "ignore", stderr: "pipe",
-  });
-  p.stdin.write(batchPaths.join("\n") + "\n");
-  await p.stdin.end();
-  const [stderr, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
-  if (code !== 0) throw new Error(stderr || `rsync exited ${code}`);
+  for (const path of files) copyOne(repoRoot, wtDir, path, verbose, force);
 }
 
 export async function syncFiles(repoRoot: string, wtDir: string, files: string[], verbose: boolean, force = false): Promise<string[]> {
