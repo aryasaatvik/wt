@@ -86,6 +86,7 @@ export interface SyncPlan {
   actions: SyncAction[];
   summary: Record<SyncStatus, number>;
   bytesToCopy: number;
+  force: boolean;
 }
 
 export interface PlanSyncOptions {
@@ -203,7 +204,7 @@ export async function planSync(source: string, target: string, options: PlanSync
     source: resolve(source), target: resolve(target), mode,
     manifestPath: hasManifest ? manifestPath : null,
     manifestHash: hasManifest ? createHash("sha256").update(readFileSync(manifestPath)).digest("hex") : null,
-    actions, summary,
+    actions, summary, force: options.force ?? false,
     bytesToCopy: actions.filter((action) => action.status === "copy").reduce((sum, action) => sum + action.bytes, 0),
   };
 }
@@ -222,25 +223,38 @@ export function classifyCopy(repoRoot: string, rel: string): CopyKind {
   } catch { return "skip"; }
 }
 
-function copyDanglingSymlink(repoRoot: string, wtDir: string, rel: string): void {
+function copyDanglingSymlink(repoRoot: string, wtDir: string, rel: string, force: boolean): void {
   const dest = join(wtDir, rel);
   mkdirSync(dirname(dest), { recursive: true });
-  if (lstatExists(dest)) rmSync(dest);
+  if (force && lstatExists(dest)) rmSync(dest);
   symlinkSync(readlinkSync(join(repoRoot, rel)), dest);
 }
 
-export async function rsyncFiles(repoRoot: string, wtDir: string, files: string[], verbose: boolean): Promise<void> {
+async function rsyncOne(repoRoot: string, wtDir: string, rel: string, verbose: boolean, force: boolean): Promise<void> {
+  const dest = join(wtDir, rel);
+  mkdirSync(dirname(dest), { recursive: true });
+  const result = await runAsync([
+    "rsync", verbose ? "-av" : "-a", ...(force ? [] : ["--ignore-existing"]), "--", join(repoRoot, rel), dest,
+  ]);
+  if (!result.ok) throw new Error(result.stderr || `rsync exited ${result.code}`);
+}
+
+export async function rsyncFiles(repoRoot: string, wtDir: string, files: string[], verbose: boolean, force = false): Promise<void> {
   if (files.length === 0) return;
-  const p = Bun.spawn(["rsync", verbose ? "-av" : "-a", "--files-from=-", `${repoRoot}/`, `${wtDir}/`], {
+  const newlinePaths = files.filter((path) => path.includes("\n") || path.includes("\r"));
+  const batchPaths = files.filter((path) => !newlinePaths.includes(path));
+  for (const path of newlinePaths) await rsyncOne(repoRoot, wtDir, path, verbose, force);
+  if (batchPaths.length === 0) return;
+  const p = Bun.spawn(["rsync", verbose ? "-av" : "-a", ...(force ? [] : ["--ignore-existing"]), "--files-from=-", `${repoRoot}/`, `${wtDir}/`], {
     stdin: "pipe", stdout: verbose ? "inherit" : "ignore", stderr: "pipe",
   });
-  p.stdin.write(files.join("\n") + "\n");
+  p.stdin.write(batchPaths.join("\n") + "\n");
   await p.stdin.end();
   const [stderr, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
   if (code !== 0) throw new Error(stderr || `rsync exited ${code}`);
 }
 
-export async function syncFiles(repoRoot: string, wtDir: string, files: string[], verbose: boolean): Promise<string[]> {
+export async function syncFiles(repoRoot: string, wtDir: string, files: string[], verbose: boolean, force = false): Promise<string[]> {
   const rsyncList: string[] = [];
   const dangling: string[] = [];
   for (const rel of files) {
@@ -248,9 +262,9 @@ export async function syncFiles(repoRoot: string, wtDir: string, files: string[]
     if (kind === "rsync") rsyncList.push(rel);
     else if (kind === "symlink") dangling.push(rel);
   }
-  await rsyncFiles(repoRoot, wtDir, rsyncList, verbose);
+  await rsyncFiles(repoRoot, wtDir, rsyncList, verbose, force);
   for (const rel of dangling) {
-    copyDanglingSymlink(repoRoot, wtDir, rel);
+    copyDanglingSymlink(repoRoot, wtDir, rel, force);
     if (verbose) console.log(rel);
   }
   const landed = new Set([...rsyncList, ...dangling]);
@@ -259,9 +273,11 @@ export async function syncFiles(repoRoot: string, wtDir: string, files: string[]
 
 export async function applySyncPlan(plan: SyncPlan, verbose = false): Promise<string[]> {
   const files = plan.actions.filter((action) => action.status === "copy").map((action) => action.path);
-  const landed = await syncFiles(plan.source, plan.target, files, verbose);
+  const landed = await syncFiles(plan.source, plan.target, files, verbose, plan.force);
   if (landed.length !== files.length) {
     throw new Error(`sync source changed while copying: ${files.filter((path) => !landed.includes(path)).join(", ")}`);
   }
+  const conflicts = landed.filter((path) => !identical(join(plan.source, path), join(plan.target, path)));
+  if (conflicts.length > 0) throw new Error(`target changed while copying: ${conflicts.join(", ")}`);
   return landed;
 }

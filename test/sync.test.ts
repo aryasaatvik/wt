@@ -162,4 +162,32 @@ describe("syncFiles", () => {
     const landed = await syncFiles(src, dest, ["gone.env"], false);
     expect(landed).toEqual([]);
   });
+
+  test("copies newline paths without injecting extra rsync entries", async () => {
+    const src = mkdtempSync(join(tmpdir(), "wt-sync-src-"));
+    const dest = mkdtempSync(join(tmpdir(), "wt-sync-dst-"));
+    writeFileSync(join(src, "selected\nname"), "selected\n");
+    writeFileSync(join(src, "name"), "must not copy\n");
+    const landed = await syncFiles(src, dest, ["selected\nname"], false);
+    expect(landed).toEqual(["selected\nname"]);
+    expect(readFileSync(join(dest, "selected\nname"), "utf8")).toBe("selected\n");
+    expect(existsSync(join(dest, "name"))).toBe(false);
+  });
+});
+
+test("applySyncPlan preserves a target created after planning", async () => {
+  const repo = makeRepo();
+  try {
+    repo.write(".gitignore", ".env\n");
+    repo.write(".worktreeinclude", ".env\n");
+    repo.commit("policy");
+    const target = repo.addWorktree("lane", { branch: "lane" });
+    repo.write(".env", "source\n");
+    const plan = await planSync(repo.dir, target, { config: { requireInclude: false, exclude: [] } });
+    writeFileSync(join(target, ".env"), "late target\n");
+    await expect(applySyncPlan(plan)).rejects.toThrow("target changed while copying");
+    expect(readFileSync(join(target, ".env"), "utf8")).toBe("late target\n");
+  } finally {
+    repo.rm();
+  }
 });
