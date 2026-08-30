@@ -165,6 +165,16 @@ describe("defaultBase", () => {
     }
   });
 
+  test("ignores a stale origin/HEAD symbolic ref", () => {
+    const repo = makeRepo();
+    try {
+      repo.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/missing");
+      expect(defaultBase(repo.dir)).toBe("main");
+    } finally {
+      repo.rm();
+    }
+  });
+
   test("falls back to local main/master/dev and otherwise fails", () => {
     const repo = makeRepo();
     try {

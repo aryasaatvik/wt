@@ -77,7 +77,10 @@ export function defaultBase(cwd: string): string | null {
   const originHead = run(["git", "-C", cwd, "symbolic-ref", "refs/remotes/origin/HEAD"]).trim();
   if (originHead) {
     const name = originHead.replace(/^refs\/remotes\/origin\//, "");
-    return `origin/${name}`;
+    const remote = `origin/${name}`;
+    if (Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", remote]).exitCode === 0) {
+      return remote;
+    }
   }
   for (const candidate of ["main", "master", "dev"]) {
     if (branchExists(cwd, candidate)) return candidate;
