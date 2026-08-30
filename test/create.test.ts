@@ -159,7 +159,8 @@ describe("defaultBase", () => {
       repo.addOrigin();
       repo.git("push", "origin", "trunk");
       repo.git("remote", "set-head", "origin", "trunk");
-      expect(defaultBase(repo.dir)).toBe("origin/trunk");
+      repo.git("branch", "origin/trunk", "main");
+      expect(defaultBase(repo.dir)).toBe("refs/remotes/origin/trunk");
     } finally {
       repo.rm();
     }

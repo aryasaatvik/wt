@@ -79,7 +79,7 @@ export function defaultBase(cwd: string): string | null {
     const name = originHead.replace(/^refs\/remotes\/origin\//, "");
     const remote = `origin/${name}`;
     if (Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", `refs/remotes/${remote}`]).exitCode === 0) {
-      return remote;
+      return `refs/remotes/${remote}`;
     }
   }
   for (const candidate of ["main", "master", "dev"]) {
@@ -87,7 +87,7 @@ export function defaultBase(cwd: string): string | null {
   }
   for (const candidate of ["main", "master", "dev"]) {
     if (Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", `refs/remotes/origin/${candidate}`]).exitCode === 0) {
-      return `origin/${candidate}`;
+      return `refs/remotes/origin/${candidate}`;
     }
   }
   return null;
