@@ -45,6 +45,13 @@ export interface ScanOptions {
   env?: Record<string, string | undefined>;
   concurrency?: number;
   sizeMode?: SizeMode;
+  /** Resolve unmatched lanes by commit (one API call each). Default true. */
+  resolvePrsByCommit?: boolean;
+}
+
+export interface RemoteRepo {
+  name: string;
+  nwo: string;
 }
 
 export interface PrListing {
@@ -98,6 +105,96 @@ export function prStateFor(
   const prState: PrState =
     state === "open" || state === "merged" || state === "closed" ? state : "unknown";
   return { prState, prNumber: pr.number };
+}
+
+const GITHUB_REMOTE = /github\.com[:/](.+?)(?:\.git)?$/;
+
+/**
+ * GitHub remotes as owner/name, origin first. A fork workflow puts the PR on
+ * `upstream`, so a listing that only ever asks origin reports "no PR" for work
+ * that is very much open.
+ */
+export async function remoteRepos(cwd: string): Promise<RemoteRepo[]> {
+  const list = await runAsync(["git", "-C", cwd, "remote"]);
+  if (!list.ok) return [];
+  const names = list.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+  names.sort((a, b) => Number(b === "origin") - Number(a === "origin"));
+  const repos: RemoteRepo[] = [];
+  for (const name of names) {
+    const url = await runAsync(["git", "-C", cwd, "remote", "get-url", name]);
+    const nwo = url.ok ? GITHUB_REMOTE.exec(url.stdout.trim())?.[1] : undefined;
+    if (nwo && !repos.some((r) => r.nwo === nwo)) repos.push({ name, nwo });
+  }
+  return repos;
+}
+
+/**
+ * Open beats merged beats closed. If a commit sits in several PRs, the most
+ * live one decides: treating an open lane as merged is how you delete work in
+ * progress, while treating a merged lane as open only costs disk.
+ */
+const PR_RANK: Record<string, number> = { open: 3, merged: 2, closed: 1 };
+
+export function pickPr(
+  candidates: Array<{ prState: PrState; prNumber: number }>,
+): { prState: PrState; prNumber: number | null } | null {
+  let best: { prState: PrState; prNumber: number } | null = null;
+  for (const c of candidates) {
+    if (!best || (PR_RANK[c.prState] ?? 0) > (PR_RANK[best.prState] ?? 0)) best = c;
+  }
+  return best;
+}
+
+/**
+ * PRs associated with a commit, across every GitHub remote. This is the only
+ * mapping that works for a detached lane — it has no branch for a headRefName
+ * match, which is exactly how a stack CLI leaves a worktree after it merges.
+ * Returns unknown when any remote lookup fails, because partial evidence must
+ * not authorize removal. An open result is safe to return even from a partial
+ * lookup because it vetoes removal. Returns null only when gh is unavailable.
+ */
+export async function prForCommit(
+  repos: RemoteRepo[],
+  sha: string,
+  env: Record<string, string | undefined> = process.env,
+  timeoutMs = 8000,
+): Promise<{ prState: PrState; prNumber: number | null } | null> {
+  if (!Bun.which("gh", { PATH: env.PATH ?? "" })) return null;
+  const candidates: Array<{ prState: PrState; prNumber: number }> = [];
+  let complete = true;
+  for (const { nwo } of repos) {
+    try {
+      const p = Bun.spawn(
+        [
+          "gh",
+          "api",
+          `repos/${nwo}/commits/${sha}/pulls`,
+          "--jq",
+          '.[] | [.number, (if .merged_at then "merged" else .state end)] | @tsv',
+        ],
+        { env: env as Record<string, string>, stdout: "pipe", stderr: "ignore" },
+      );
+      const timer = setTimeout(() => p.kill(), timeoutMs);
+      const [stdout, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+      clearTimeout(timer);
+      if (code !== 0) {
+        complete = false;
+        continue;
+      }
+      for (const line of stdout.split("\n").filter(Boolean)) {
+        const [num, state] = line.split("\t");
+        const prState = String(state).toLowerCase();
+        if (prState !== "open" && prState !== "merged" && prState !== "closed") continue;
+        candidates.push({ prState, prNumber: Number(num) });
+      }
+    } catch {
+      complete = false;
+    }
+  }
+  const best = pickPr(candidates);
+  if (best?.prState === "open") return best;
+  if (!complete) return { prState: "unknown", prNumber: null };
+  return best ?? { prState: "none", prNumber: null };
 }
 
 // du over a big node_modules tree is the dominant cost of a scan, and sizes
@@ -221,5 +318,18 @@ export async function scanWorktrees(cwd: string, opts: ScanOptions = {}): Promis
     probe(w, repoRoot, defaultBranch, opts.sizeMode ?? "cached"),
   );
   const listing = await prsPromise;
-  return probed.map((r) => ({ ...r, ...prStateFor(r.branch, listing) }));
+  const records = probed.map((r) => ({ ...r, ...prStateFor(r.branch, listing) }));
+
+  // Branch matching is blind to detached lanes, PRs opened on another remote,
+  // and misses in truncated listings. Only a known-open PR is already the
+  // highest-ranked answer; reconcile every other state across remotes by
+  // commit. An unresolved unknown remains a removal veto.
+  if (opts.resolvePrsByCommit === false) return records;
+  const repos = await remoteRepos(repoRoot);
+  if (repos.length === 0) return records;
+  return pool(records, opts.concurrency ?? 10, async (r) => {
+    if (r.primary || r.prState === "open") return r;
+    const resolved = await prForCommit(repos, r.head, opts.env ?? process.env);
+    return resolved ? { ...r, ...resolved } : r;
+  });
 }

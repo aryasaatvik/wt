@@ -89,7 +89,7 @@ wt reap --apply               # remove the safe set (branches are never deleted)
 wt reap --all --older-than 14 # fleet sweep, only lanes idle >= 14 days
 ```
 
-Only REACHABLE / REACHABLE_BRANCH / EMPTY / CONTENT_LANDED lanes auto-remove; the safety pipeline (scratchpad salvage, env-drift refusal, dirty refusal, TOCTOU HEAD guard) can still demote any of them to SKIP. Exit code 1 means something was skipped and needs a human.
+Open or unknown PR state vetoes automatic removal. PUSHED_ONLY lanes require a confirmed merged PR; otherwise only REACHABLE / REACHABLE_BRANCH / EMPTY / CONTENT_LANDED lanes auto-remove. The safety pipeline (scratchpad salvage, env-drift refusal, dirty refusal, TOCTOU HEAD guard) can still demote any candidate to SKIP. Exit code 1 means something was skipped and needs a human.
 
 ## Options
 

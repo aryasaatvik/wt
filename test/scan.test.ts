@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { originDefault } from "../src/git.ts";
-import { prStateFor, scanWorktrees, type PrInfo } from "../src/scan.ts";
+import { pickPr, prForCommit, prStateFor, remoteRepos, scanWorktrees, type PrInfo } from "../src/scan.ts";
 import { makeRepo } from "./harness.ts";
 
 describe("prStateFor", () => {
@@ -31,6 +31,70 @@ describe("prStateFor", () => {
       prNumber: null,
     });
     expect(prStateFor("feat/a", { prs, complete: false })).toEqual({ prState: "open", prNumber: 12 });
+  });
+});
+
+describe("pickPr", () => {
+  test("open outranks merged outranks closed", () => {
+    expect(pickPr([{ prState: "merged", prNumber: 1 }, { prState: "open", prNumber: 2 }])).toEqual({
+      prState: "open",
+      prNumber: 2,
+    });
+    expect(pickPr([{ prState: "closed", prNumber: 3 }, { prState: "merged", prNumber: 4 }])).toEqual({
+      prState: "merged",
+      prNumber: 4,
+    });
+    expect(pickPr([])).toBeNull();
+  });
+});
+
+describe("remoteRepos", () => {
+  test("parses GitHub remotes, origin first, and skips non-GitHub ones", async () => {
+    const repo = makeRepo();
+    try {
+      repo.git("remote", "add", "upstream", "https://github.com/acme/widgets.git");
+      repo.git("remote", "add", "origin", "git@github.com:me/widgets.git");
+      repo.git("remote", "add", "mirror", "https://git.example.com/me/widgets.git");
+      expect(await remoteRepos(repo.dir)).toEqual([
+        { name: "origin", nwo: "me/widgets" },
+        { name: "upstream", nwo: "acme/widgets" },
+      ]);
+    } finally {
+      repo.rm();
+    }
+  });
+});
+
+describe("prForCommit", () => {
+  test("keeps the result unknown when any remote lookup fails", async () => {
+    const repo = makeRepo();
+    try {
+      const bin = join(repo.root, "bin");
+      mkdirSync(bin);
+      const gh = join(bin, "gh");
+      writeFileSync(
+        gh,
+        `#!/bin/sh
+case "$2" in
+  repos/acme/widgets/*) printf '4\\tmerged\\n' ;;
+  *) exit 1 ;;
+esac
+`,
+      );
+      chmodSync(gh, 0o755);
+      expect(
+        await prForCommit(
+          [
+            { name: "origin", nwo: "acme/widgets" },
+            { name: "backup", nwo: "me/widgets" },
+          ],
+          "abc123",
+          { PATH: `${bin}:/usr/bin:/bin` },
+        ),
+      ).toEqual({ prState: "unknown", prNumber: null });
+    } finally {
+      repo.rm();
+    }
   });
 });
 
@@ -170,6 +234,86 @@ describe("scanWorktrees", () => {
       repo.addOrigin();
       const records = await scanWorktrees(repo.dir, { env: { PATH: "/usr/bin:/bin" } });
       expect(records[0]?.prState).toBe("unknown");
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("resolves a truncated branch-list miss by commit", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      repo.git("remote", "set-url", "origin", "https://github.com/acme/widgets.git");
+      const lane = repo.addWorktree("feat-live", { branch: "feat/live" });
+      repo.gitIn(lane, "commit", "--allow-empty", "-m", "live work");
+
+      const bin = join(repo.root, "bin");
+      mkdirSync(bin);
+      const gh = join(bin, "gh");
+      writeFileSync(
+        gh,
+        `#!/bin/sh
+if [ "$1" = "pr" ]; then
+  printf '['
+  i=1
+  while [ "$i" -le 1000 ]; do
+    [ "$i" -gt 1 ] && printf ','
+    printf '{"headRefName":"archive/%s","state":"CLOSED","number":%s}' "$i" "$i"
+    i=$((i + 1))
+  done
+  printf ']\\n'
+else
+  printf '42\\topen\\n'
+fi
+`,
+      );
+      chmodSync(gh, 0o755);
+
+      const records = await scanWorktrees(repo.dir, {
+        env: { PATH: `${bin}:/usr/bin:/bin` },
+        sizeMode: "skip",
+      });
+      const live = records.find((r) => r.slug === "feat-live");
+      expect(live?.prState).toBe("open");
+      expect(live?.prNumber).toBe(42);
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("an open PR on another remote outranks an origin branch match", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      repo.git("remote", "set-url", "origin", "https://github.com/acme/widgets.git");
+      repo.git("remote", "add", "backup", "https://github.com/me/widgets.git");
+      const lane = repo.addWorktree("feat-live", { branch: "feat/live" });
+      repo.gitIn(lane, "commit", "--allow-empty", "-m", "live work");
+
+      const bin = join(repo.root, "bin");
+      mkdirSync(bin);
+      const gh = join(bin, "gh");
+      writeFileSync(
+        gh,
+        `#!/bin/sh
+if [ "$1" = "pr" ]; then
+  printf '[{"headRefName":"feat/live","state":"MERGED","number":4}]\\n'
+elif echo "$2" | grep -q 'repos/acme/widgets/'; then
+  printf '4\\tmerged\\n'
+else
+  printf '9\\topen\\n'
+fi
+`,
+      );
+      chmodSync(gh, 0o755);
+
+      const records = await scanWorktrees(repo.dir, {
+        env: { PATH: `${bin}:/usr/bin:/bin` },
+        sizeMode: "skip",
+      });
+      const live = records.find((r) => r.slug === "feat-live");
+      expect(live?.prState).toBe("open");
+      expect(live?.prNumber).toBe(9);
     } finally {
       repo.rm();
     }

@@ -1,18 +1,19 @@
 // wt reap — report (default) and remove (--apply) safely-reapable worktrees.
 //
-// Policy (locked 2026-07-15): only REACHABLE / REACHABLE_BRANCH / EMPTY /
-// CONTENT_LANDED lanes may auto-remove, and the safety pipeline can still
-// demote any of them to SKIP. STRANDED and edge verdicts never auto-remove.
-// Reap never deletes branches.
+// Policy (see isRemovable in verdict.ts): REACHABLE / REACHABLE_BRANCH /
+// EMPTY / CONTENT_LANDED auto-remove; PUSHED_ONLY needs a merged PR; an open
+// or unknown PR vetoes every verdict. The safety pipeline can still demote any
+// of them to SKIP. STRANDED and edge verdicts never auto-remove. Reap never
+// deletes branches.
 
 import { basename, dirname, join } from "node:path";
 import { discoverPrimaries, humanSize } from "./ls.ts";
 import { resolvePrimaryRepo } from "./git.ts";
 import { runSafetyPipeline, type SafetyResult } from "./safety.ts";
-import { scanWorktrees, type ScanOptions, type WorktreeStatus } from "./scan.ts";
+import { prForCommit, remoteRepos, scanWorktrees, type ScanOptions, type WorktreeStatus } from "./scan.ts";
 import { bold, dim, gray, green, pool, red, runAsync, yellow } from "./term.ts";
 import { err, ExitError } from "./ui.ts";
-import { AUTO_REMOVABLE, classifyWorktree, verdictLabel, type Verdict } from "./verdict.ts";
+import { classifyWorktree, isRemovable, verdictLabel, type Verdict } from "./verdict.ts";
 
 export type Disposition = "remove" | "skip" | "keep";
 
@@ -57,8 +58,14 @@ async function planRepo(repoRoot: string, opts: ReapOptions): Promise<ReapEntry[
       }
       const verdict = await classifyWorktree(record.path);
       const verdictText = verdictLabel(verdict, record.prState, record.prNumber);
-      if (!AUTO_REMOVABLE.has(verdict.kind)) {
-        return { ...base, verdict, verdictText, disposition: "keep", reasons: [verdictText] };
+      if (!isRemovable(verdict.kind, record.prState)) {
+        const reason =
+          record.prState === "open"
+            ? `open PR #${record.prNumber} — active lane (${verdict.kind})`
+            : record.prState === "unknown"
+              ? `PR state unknown — keeping (${verdict.kind})`
+              : verdictText;
+        return { ...base, verdict, verdictText, disposition: "keep", reasons: [reason] };
       }
       if (cutoffMs !== null) {
         const lastCommitMs = record.lastCommitAt ? Date.parse(record.lastCommitAt) : Number.NaN;
@@ -127,9 +134,14 @@ export interface ApplyResult {
   skipped: Array<{ entry: ReapEntry; reason: string }>;
 }
 
-export async function applyReap(entries: ReapEntry[]): Promise<ApplyResult> {
+export interface ApplyOptions {
+  env?: Record<string, string | undefined>;
+}
+
+export async function applyReap(entries: ReapEntry[], opts: ApplyOptions = {}): Promise<ApplyResult> {
   const removed: ReapEntry[] = [];
   const skipped: ApplyResult["skipped"] = [];
+  const reposByRoot = new Map<string, Awaited<ReturnType<typeof remoteRepos>>>();
   for (const entry of entries) {
     if (entry.disposition !== "remove") continue;
     const { record, repoRoot } = entry;
@@ -137,6 +149,27 @@ export async function applyReap(entries: ReapEntry[]): Promise<ApplyResult> {
     const headNow = await runAsync(["git", "-C", record.path, "rev-parse", "HEAD"]);
     if (!headNow.ok || headNow.stdout.trim() !== record.head) {
       skipped.push({ entry, reason: "HEAD moved since scan" });
+      continue;
+    }
+    // PR state is external and can change without moving HEAD. Recheck by
+    // commit immediately before removal; a failed lookup becomes unknown and
+    // therefore cannot authorize the stale plan.
+    let repos = reposByRoot.get(repoRoot);
+    if (!repos) {
+      repos = await remoteRepos(repoRoot);
+      reposByRoot.set(repoRoot, repos);
+    }
+    const latestPr =
+      repos.length > 0
+        ? await prForCommit(repos, record.head, opts.env ?? process.env)
+        : { prState: "unknown" as const, prNumber: null };
+    const latestPrState = latestPr?.prState ?? "unknown";
+    if (!entry.verdict || !isRemovable(entry.verdict.kind, latestPrState)) {
+      const reason =
+        latestPrState === "open"
+          ? `PR #${latestPr?.prNumber} opened since planning`
+          : `PR state became ${latestPrState} since planning`;
+      skipped.push({ entry, reason });
       continue;
     }
     // Re-evaluate read-only first: if something changed since the plan
