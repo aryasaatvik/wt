@@ -151,7 +151,7 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
     syncSpin.stop();
     marker.phase = "incomplete";
     marker.failure = e instanceof Error ? e.message : String(e);
-    marker.recoveryCommand = `wt sync --to ${shellQuote(wtDir)}`;
+    marker.recoveryCommand = `cd ${shellQuote(repoRoot)} && wt sync --to ${shellQuote(wtDir)} --force`;
     writeProvenance(wtDir, marker);
     err("Failed to sync gitignored files");
     detail(marker.failure);
