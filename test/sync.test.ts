@@ -63,8 +63,8 @@ describe("sync planner", () => {
   test("uses gitignore-style manifests, target ignores, conflicts, and hard exclusions", async () => {
     const repo = makeRepo();
     try {
-      repo.write(".gitignore", ".env\n.scratchpad/\n.cache/\n.claude/worktrees/\n");
-      repo.write(".worktreeinclude", "/.env\n/.scratchpad/**\n!/.scratchpad/archive/\n!/.scratchpad/archive/**\n/.cache/**\n/.claude/worktrees/**\n");
+      repo.write(".gitignore", ".env\n.scratchpad/\n.cache/\n.claude/worktrees/\nsource-only.local\n");
+      repo.write(".worktreeinclude", "/.env\n/.scratchpad/**\n!/.scratchpad/archive/\n!/.scratchpad/archive/**\n/.cache/**\n/.claude/worktrees/**\n/source-only.local\n");
       repo.commit("sync policy");
       const target = repo.addWorktree("lane", { branch: "lane" });
       repo.write(".env", "A=1\n");
@@ -72,6 +72,8 @@ describe("sync planner", () => {
       repo.write(".scratchpad/archive/old.md", "old\n");
       repo.write(".cache/large.bin", "cache\n");
       repo.write(".claude/worktrees/private/state", "private\n");
+      repo.write("source-only.local", "source\n");
+      writeFileSync(join(target, ".gitignore"), ".env\n.scratchpad/\n.cache/\n.claude/worktrees/\n");
       mkdirSync(join(target, ".scratchpad"), { recursive: true });
       writeFileSync(join(target, ".scratchpad/STATE.md"), "same\n");
       writeFileSync(join(target, ".env"), "different\n");
@@ -83,11 +85,17 @@ describe("sync planner", () => {
       expect(plan.actions.find((item) => item.path === ".scratchpad/STATE.md")?.status).toBe("skip-identical");
       expect(plan.actions.find((item) => item.path === ".cache/large.bin")?.status).toBe("copy");
       expect(plan.actions.find((item) => item.path === ".claude/worktrees/private/state")?.status).toBe("excluded");
+      expect(plan.actions.find((item) => item.path === "source-only.local")?.reason).toBe("not ignored by target");
       expect(plan.actions.some((item) => item.path.includes("archive"))).toBe(false);
 
       const copied = await applySyncPlan(plan);
       expect(copied).toEqual([".cache/large.bin"]);
       expect(readFileSync(join(target, ".env"), "utf8")).toBe("different\n");
+
+      const forced = await planSync(repo.dir, target, { force: true, config: { requireInclude: false, exclude: [] } });
+      expect(forced.actions.find((item) => item.path === ".env")?.status).toBe("copy");
+      await applySyncPlan(forced);
+      expect(readFileSync(join(target, ".env"), "utf8")).toBe("A=1\n");
     } finally {
       repo.rm();
     }

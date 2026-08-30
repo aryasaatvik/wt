@@ -134,7 +134,7 @@ exclude = [".env.production*", ".scratchpad/archive/**"]
 
 There is deliberately no `.worktreeignore`: repository policy stays in one ordered pattern file, where `!` rules express exceptions, and machine-specific exclusions stay in user configuration. Hard exclusions are limited to Git and worktree-manager ownership state (`.git`, `.claude/worktrees`, `.conductor`), so a repository may explicitly include a large cache when that is intentional.
 
-Dangling symlinks on the allowlist are recreated with `symlink` rather than handed to rsync. macOS openrsync `stat()`s the missing target and would otherwise fail the whole create (rsync exit 23).
+Selected dangling symlinks are recreated with `symlink` rather than handed to rsync. macOS openrsync `stat()`s the missing target and would otherwise fail the whole create (rsync exit 23).
 
 `wt sync` defaults to primary → current and supports `--from primary|current|<path>`, `--to <branch|path>`, `--dry-run`, `--json`, and `--force`. If file sync fails, `wt` exits nonzero and prints the captured error output. Creation records the source, manifest hash, copied paths, file count, and byte count in the worktree's `wt.json` marker.
 

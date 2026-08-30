@@ -167,10 +167,12 @@ export async function planSync(source: string, target: string, options: PlanSync
   const manifestPath = join(source, MANIFEST);
   const hasManifest = existsSync(manifestPath);
   const mode = hasManifest ? "manifest" : config.requireInclude ? "none" : "legacy";
-  const sourceIgnored = new Set(await gitIgnored(source, mode === "legacy" ? LEGACY_PATHSPECS : []));
+  const legacyIgnored = mode === "legacy" ? await gitIgnored(source, LEGACY_PATHSPECS) : [];
+  const manifestSelected = mode === "manifest" ? await selectedByManifest(source, manifestPath) : [];
+  const sourceIgnored = mode === "manifest" ? await ignoredByTarget(source, manifestSelected) : new Set(legacyIgnored);
   const selected = mode === "manifest"
-    ? (await selectedByManifest(source, manifestPath)).filter((path) => sourceIgnored.has(path))
-    : mode === "legacy" ? [...sourceIgnored].filter(isAllowed) : [];
+    ? manifestSelected.filter((path) => sourceIgnored.has(path))
+    : mode === "legacy" ? legacyIgnored.filter(isAllowed) : [];
   const targetIgnored = await ignoredByTarget(target, selected);
   const userExcluded = await matchIgnorePatterns(selected, config.exclude);
   const actions: SyncAction[] = [];
