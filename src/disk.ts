@@ -133,7 +133,12 @@ export async function measureDiskUsage(cwd: string, mode: DiskMode = "cached"): 
   const privateByWorktree = metadata.map((tree) => minimalRoots(tree.filter((item) => item.gitDir !== item.commonDir).map((item) => item.gitDir)));
   const allPrivate = minimalRoots(privateByWorktree.flat());
   const sharedRoots = minimalRoots(metadata.flatMap((tree) => tree.map((item) => item.commonDir)));
-  const cachedShared = cached.find((usage) => typeof usage?.sharedKb === "number")?.sharedKb;
+  // Shared storage is repository-wide. Reuse it only when every lane's cache
+  // is valid; if any lane needs measurement, refresh the common total for all
+  // reports so a stale cache cannot contaminate newly measured lanes.
+  const cachedShared = cached.every((usage) => usage !== null)
+    ? cached.find((usage) => typeof usage?.sharedKb === "number")?.sharedKb
+    : undefined;
   const sharedKb = cachedShared ?? Math.max(
     0,
     await sumKb(sharedRoots) - await sumKb(allPrivate.filter((path) => sharedRoots.some((root) => contains(root, path)))),
@@ -144,12 +149,14 @@ export async function measureDiskUsage(cwd: string, mode: DiskMode = "cached"): 
       return { path: worktree.path, branch: worktree.branch, primary: false, cached: false, usage: null };
     }
     if (cached[index]) {
+      const usage = { ...cached[index]!, sharedKb };
+      if (cached[index]!.sharedKb !== sharedKb) writeCache(cachePath(metadata[index]!), usage);
       return {
         path: worktree.path,
         branch: worktree.branch,
         primary: worktree.path === primary,
         cached: true,
-        usage: cached[index],
+        usage,
       };
     }
     const tree = metadata[index]!;

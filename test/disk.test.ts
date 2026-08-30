@@ -61,4 +61,33 @@ describe("owned disk accounting", () => {
       repo.rm();
     }
   });
+
+  test("refreshes shared storage when any worktree cache misses", async () => {
+    const repo = makeRepo();
+    try {
+      const lane = repo.addWorktree("lane", { branch: "feat/lane" });
+      await measureDiskUsage(repo.dir, "fresh");
+
+      const primaryGitDir = repo.git("rev-parse", "--absolute-git-dir").trim();
+      const primaryCache = join(primaryGitDir, "wt-size.json");
+      const laneCache = join(repo.gitIn(lane, "rev-parse", "--absolute-git-dir").trim(), "wt-size.json");
+      const stale = JSON.parse(readFileSync(primaryCache, "utf8"));
+      stale.measuredAt = new Date().toISOString();
+      stale.usage.sharedKb = 1;
+      writeFileSync(primaryCache, `${JSON.stringify(stale)}\n`);
+      rmSync(laneCache, { force: true });
+      writeFileSync(join(primaryGitDir, "shared-growth.bin"), "x".repeat(128 * 1024));
+
+      const reports = await measureDiskUsage(repo.dir, "cached");
+      const primary = reports.find((report) => report.primary)!;
+      const linked = reports.find((report) => report.branch === "feat/lane")!;
+      expect(primary.cached).toBe(true);
+      expect(linked.cached).toBe(false);
+      expect(linked.usage!.sharedKb).toBeGreaterThan(1);
+      expect(primary.usage!.sharedKb).toBe(linked.usage!.sharedKb);
+      expect(JSON.parse(readFileSync(primaryCache, "utf8")).usage.sharedKb).toBe(linked.usage!.sharedKb);
+    } finally {
+      repo.rm();
+    }
+  });
 });
