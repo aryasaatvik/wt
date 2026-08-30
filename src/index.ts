@@ -38,6 +38,9 @@ ${bold("Commands:")}
                        --all      scan every <repo>-worktrees dir under ~/Developer
                        --fresh    remeasure sizes, ignoring the cache
                        --no-size  skip size measurement entirely
+  wt du [target] [flags]
+                       Owned disk: checkout + lane-private Git metadata
+                       --json  machine-readable breakdown · --fresh  remeasure
   wt reap [flags]       Report reapable worktrees (dry run by default)
                        Auto-removable: REACHABLE, REACHABLE_BRANCH, EMPTY,
                        CONTENT_LANDED; open/unknown PR state always vetoes
@@ -191,6 +194,32 @@ if (command === "sync") {
     const result = await cmdSync({ cwd, from, to, dryRun, json, force, verbose });
     console.log(json ? JSON.stringify(result, null, 2) : renderSyncPlan(result.plan));
   } catch (e) {
+    exitFrom(e);
+  }
+  process.exit(0);
+}
+
+if (command === "du") {
+  let target: string | undefined;
+  let json = false;
+  let fresh = false;
+  for (const arg of args.slice(1)) {
+    if (arg === "--json") json = true;
+    else if (arg === "--fresh") fresh = true;
+    else if (!arg.startsWith("-") && !target) target = arg;
+    else {
+      err(`unknown argument for wt du: ${arg}`);
+      process.exit(1);
+    }
+  }
+  const spin = json ? null : spinner("Measuring owned disk");
+  try {
+    const { cmdDu } = await import("./du.ts");
+    const out = await cmdDu({ cwd, target, json, fresh });
+    spin?.stop();
+    console.log(out);
+  } catch (e) {
+    spin?.stop();
     exitFrom(e);
   }
   process.exit(0);

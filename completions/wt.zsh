@@ -10,6 +10,7 @@ _wt() {
     'remove:Remove worktree'
     'ls:List all worktrees'
     'list:List all worktrees'
+    'du:Show owned disk usage'
   )
 
   _arguments -C \
@@ -47,6 +48,13 @@ _wt() {
             '--dry-run[Print plan without copying]' \
             '--json[Print machine-readable plan]' \
             '--force[Overwrite conflicting target files]'
+          return
+          ;;
+        du)
+          _arguments \
+            '--json[Print machine-readable breakdown]' \
+            '--fresh[Remeasure instead of using cache]' \
+            '*:worktree:_wt_worktree_targets'
           return
           ;;
       esac

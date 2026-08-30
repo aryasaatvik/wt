@@ -54,6 +54,8 @@ wt ls --all               # sweep every <repo>-worktrees dir under ~/Developer
 wt ls --json              # machine-readable records
 wt ls --fresh             # remeasure sizes, ignoring the 24h cache
 wt ls --no-size           # skip size measurement entirely
+wt du                     # checkout/private/shared disk breakdown
+wt du feat/x --json       # one lane, machine-readable
 wt reap                   # dry-run report of safely-removable worktrees
 wt reap --apply           # remove them (branches are kept)
 wt reap --all --older-than 14
@@ -74,7 +76,11 @@ cd "$(wt)"
 
 ### Size cache
 
-`du` over a fleet of node_modules trees is the dominant cost of a scan, so each worktree's size is cached for 24 hours in its own gitdir (`.git/worktrees/<name>/wt-size.json`; git removes it with the worktree). A `~` prefix in the SIZE column marks a cached value. `--fresh` remeasures on demand, `--no-size` skips measurement entirely; sizes are display-only, so removal safety never depends on them.
+`wt ls` reports the space owned by each lane: checkout files plus private Git metadata. It does not charge the primary's shared object/module store to every worktree. `wt du` exposes the full checkout/private/owned/shared breakdown; pass a branch, slug, or path to select one lane, and use `--json` or `--fresh` for automation and remeasurement.
+
+Measurements are cached for 24 hours in each worktree's gitdir (`wt-size.json`) using a versioned schema. A `~` prefix in the SIZE column marks a cached value. `--fresh` remeasures on demand, `--no-size` skips measurement entirely; sizes are display-only, so removal safety never depends on them.
+
+Nested initialized submodules are inspected through their Git dir and common dir. Checkout content and lane-private linked-worktree/submodule metadata count toward `ownedKb`; common object stores are reported once as `sharedKb`. This makes recursive submodule hydration visible without pretending all of the primary repository's `.git` directory belongs to the primary checkout.
 
 ### Removal safety
 
