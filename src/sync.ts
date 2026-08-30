@@ -7,13 +7,14 @@ import {
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { runAsync } from "./term.ts";
 
 const ENV_BASENAME = /^(\.env(\..+)?|\.dev\.vars)$/;
@@ -155,6 +156,21 @@ function lstatExists(path: string): boolean {
   try { lstatSync(path); return true; } catch { return false; }
 }
 
+function ensureSafeParent(root: string, rel: string): string {
+  const canonicalRoot = realpathSync.native(root);
+  let parent = canonicalRoot;
+  for (const component of rel.split("/").slice(0, -1)) {
+    if (!component || component === "." || component === "..") throw new Error(`unsafe sync path: ${rel}`);
+    parent = join(parent, component);
+    if (!lstatExists(parent)) mkdirSync(parent);
+    const stat = lstatSync(parent);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`unsafe symlink or non-directory parent: ${rel}`);
+    const canonicalParent = realpathSync.native(parent);
+    if (!canonicalParent.startsWith(`${canonicalRoot}/`)) throw new Error(`sync path escapes target: ${rel}`);
+  }
+  return join(parent, basename(rel));
+}
+
 function identical(source: string, target: string): boolean {
   const sourceStat = lstatSync(source);
   const targetStat = lstatSync(target);
@@ -226,8 +242,7 @@ export function classifyCopy(repoRoot: string, rel: string): CopyKind {
 }
 
 function copyDanglingSymlink(repoRoot: string, wtDir: string, rel: string, force: boolean): void {
-  const dest = join(wtDir, rel);
-  mkdirSync(dirname(dest), { recursive: true });
+  const dest = ensureSafeParent(wtDir, rel);
   if (force && lstatExists(dest)) rmSync(dest);
   try {
     symlinkSync(readlinkSync(join(repoRoot, rel)), dest);
@@ -238,8 +253,7 @@ function copyDanglingSymlink(repoRoot: string, wtDir: string, rel: string, force
 }
 
 function copyOne(repoRoot: string, wtDir: string, rel: string, verbose: boolean, force: boolean): void {
-  const dest = join(wtDir, rel);
-  mkdirSync(dirname(dest), { recursive: true });
+  const dest = ensureSafeParent(wtDir, rel);
   try {
     copyFileSync(join(repoRoot, rel), dest, force ? 0 : constants.COPYFILE_EXCL);
   } catch (e) {

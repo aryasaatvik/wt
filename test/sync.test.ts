@@ -208,3 +208,22 @@ test("applySyncPlan does not copy beneath a late target directory", async () => 
     repo.rm();
   }
 });
+
+test("applySyncPlan rejects a symlinked destination parent", async () => {
+  const repo = makeRepo();
+  const outside = mkdtempSync(join(tmpdir(), "wt-sync-outside-"));
+  try {
+    repo.write(".gitignore", ".scratchpad/\n");
+    repo.write(".worktreeinclude", ".scratchpad/**\n");
+    repo.commit("policy");
+    const target = repo.addWorktree("lane", { branch: "lane" });
+    repo.write(".scratchpad/STATE.md", "source\n");
+    const plan = await planSync(repo.dir, target, { config: { requireInclude: false, exclude: [] } });
+    symlinkSync(outside, join(target, ".scratchpad"));
+    await expect(applySyncPlan(plan)).rejects.toThrow("unsafe symlink or non-directory parent");
+    expect(existsSync(join(outside, "STATE.md"))).toBe(false);
+  } finally {
+    repo.rm();
+    rmSync(outside, { recursive: true, force: true });
+  }
+});

@@ -46,6 +46,9 @@ export async function cmdSync(options: SyncCommandOptions): Promise<{ plan: Sync
   const target = resolveLane(options.cwd, options.to, "current");
   if (source === target) throw new Error("sync source and target resolve to the same worktree");
   const plan = await planSync(source, target, { force: options.force });
+  if (!options.dryRun && plan.summary.conflict > 0) {
+    throw new Error(`${plan.summary.conflict} target conflict(s); inspect with --dry-run and retry with --force only if replacement is intended`);
+  }
   const copied = options.dryRun ? [] : await applySyncPlan(plan, options.verbose);
   return { plan, copied };
 }
