@@ -321,13 +321,14 @@ export async function scanWorktrees(cwd: string, opts: ScanOptions = {}): Promis
   const records = probed.map((r) => ({ ...r, ...prStateFor(r.branch, listing) }));
 
   // Branch matching is blind to detached lanes, PRs opened on another remote,
-  // and misses in truncated listings. Re-ask both "none" and "unknown" by
-  // commit; unresolved unknown remains a removal veto.
+  // and misses in truncated listings. Only a known-open PR is already the
+  // highest-ranked answer; reconcile every other state across remotes by
+  // commit. An unresolved unknown remains a removal veto.
   if (opts.resolvePrsByCommit === false) return records;
   const repos = await remoteRepos(repoRoot);
   if (repos.length === 0) return records;
   return pool(records, opts.concurrency ?? 10, async (r) => {
-    if (r.primary || (r.prState !== "none" && r.prState !== "unknown")) return r;
+    if (r.primary || r.prState === "open") return r;
     const resolved = await prForCommit(repos, r.head, opts.env ?? process.env);
     return resolved ? { ...r, ...resolved } : r;
   });

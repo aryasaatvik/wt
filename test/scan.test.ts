@@ -280,4 +280,42 @@ fi
       repo.rm();
     }
   });
+
+  test("an open PR on another remote outranks an origin branch match", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      repo.git("remote", "set-url", "origin", "https://github.com/acme/widgets.git");
+      repo.git("remote", "add", "backup", "https://github.com/me/widgets.git");
+      const lane = repo.addWorktree("feat-live", { branch: "feat/live" });
+      repo.gitIn(lane, "commit", "--allow-empty", "-m", "live work");
+
+      const bin = join(repo.root, "bin");
+      mkdirSync(bin);
+      const gh = join(bin, "gh");
+      writeFileSync(
+        gh,
+        `#!/bin/sh
+if [ "$1" = "pr" ]; then
+  printf '[{"headRefName":"feat/live","state":"MERGED","number":4}]\\n'
+elif echo "$2" | grep -q 'repos/acme/widgets/'; then
+  printf '4\\tmerged\\n'
+else
+  printf '9\\topen\\n'
+fi
+`,
+      );
+      chmodSync(gh, 0o755);
+
+      const records = await scanWorktrees(repo.dir, {
+        env: { PATH: `${bin}:/usr/bin:/bin` },
+        sizeMode: "skip",
+      });
+      const live = records.find((r) => r.slug === "feat-live");
+      expect(live?.prState).toBe("open");
+      expect(live?.prNumber).toBe(9);
+    } finally {
+      repo.rm();
+    }
+  });
 });
