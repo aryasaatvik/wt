@@ -1,0 +1,8 @@
+interface:
+  display_name: "wt"
+  short_description: "Create, inspect, sync, and clean Git worktrees."
+  brand_color: "#64748B"
+  default_prompt: "Use $wt to manage this repository's Git worktrees safely."
+
+policy:
+  allow_implicit_invocation: false

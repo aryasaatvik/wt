@@ -1,6 +1,7 @@
 ---
 name: wt
 description: "Git worktree helper that creates worktrees with gitignored file sync and dependency install. Use when: (1) Creating new worktrees for parallel development, (2) Managing worktree lifecycle (create, remove, list), (3) Troubleshooting worktree-related issues (hook failures, file sync). Located at ~/Developer/wt."
+disable-model-invocation: true
 ---
 
 # wt - Git Worktree Helper
@@ -8,8 +9,9 @@ description: "Git worktree helper that creates worktrees with gitignored file sy
 Quickly spin up git worktrees with explicitly selected ignored files synced and dependencies installed.
 
 ## When to use
+
 - Create a new worktree for parallel feature development
-- Remove a worktree and its branch
+- Remove a finished worktree while retaining its branch by default
 - List active worktrees
 - Debug worktree setup issues (e.g., git hooks, file sync)
 
@@ -51,6 +53,7 @@ wt new x/my-feature --no-install
 Creates worktree at `../<repo>-worktrees/<slug>/` where slashes in the branch name become dashes (e.g., `x/my-feature` → `x-my-feature`).
 
 Steps performed:
+
 1. `git worktree add -b <branch> <path> <base>`
 2. Sync gitignored config (env, scratchpad, editor/agent settings) via rsync
 3. Run `ni` to install dependencies when a lockfile or `packageManager` field identifies the package manager
@@ -63,12 +66,21 @@ If install fails, wt exits nonzero but keeps the worktree. Read its `wt.json` ph
 wt rm x/my-feature                 # by branch name
 wt rm lane-1                       # by worktree dir name (how detached worktrees are addressed)
 wt rm ../myrepo-worktrees/lane-1   # by path
-wt rm x/my-feature -D
+wt rm x/my-feature -D              # explicitly also delete the local branch
 ```
 
-Runs `git worktree remove`. Pass `-D` or `--delete-branch` to also delete the branch.
+Runs `git worktree remove` and preserves the local branch. Pass `-D` or `--delete-branch` only when
+branch deletion is explicitly requested.
 
-The target resolves in order: exact branch name → worktree directory name under `<repo>-worktrees/` → filesystem path. `wt rm` refuses worktrees with uncommitted changes and never passes `--force` through; commit/stash first, or use raw git deliberately.
+The target resolves in order: exact branch name → worktree directory name under `<repo>-worktrees/`
+→ filesystem path. `wt rm` has no dry-run mode, so inspect the lane with `wt ls -v` or the safe set
+with `wt reap` before removal.
+
+Every removal runs the same fail-closed safety pipeline. It refuses dirty or status-unreadable
+worktrees and env files that drifted from the primary (reporting key names, never values). Unique or
+older `.scratchpad/**/*.md` files are copied into the primary's dated salvage archive; a conflicting
+note newer than the primary blocks removal. `wt` evaluates the pipeline read-only first, so a
+blocked removal writes no salvage files, and it never passes `--force` to Git.
 
 ### List
 
@@ -95,15 +107,19 @@ wt reap --apply               # remove the safe set (branches are never deleted)
 wt reap --all --older-than 14 # fleet sweep, only lanes idle >= 14 days
 ```
 
-Open or unknown PR state vetoes automatic removal. PUSHED_ONLY lanes require a confirmed merged PR; otherwise only REACHABLE / REACHABLE_BRANCH / EMPTY / CONTENT_LANDED lanes auto-remove. The safety pipeline (scratchpad salvage, env-drift refusal, dirty refusal, TOCTOU HEAD guard) can still demote any candidate to SKIP. Exit code 1 means something was skipped and needs a human.
+Open or unknown PR state vetoes automatic removal. PUSHED_ONLY lanes require a confirmed merged PR;
+otherwise only REACHABLE / REACHABLE_BRANCH / EMPTY / CONTENT_LANDED lanes auto-remove. Apply is
+sequential and rechecks the exact HEAD, current PR state, and safety pipeline immediately before
+each removal; any change demotes the lane to SKIP. Branches remain available. Exit code 1 means
+something was skipped and needs a human.
 
 ## Options
 
-| Flag | Description |
-|------|-------------|
-| `--verbose` | Show detailed rsync file list during sync |
-| `--no-install` | Skip dependency install |
-| `-h`, `--help` | Show help |
+| Flag           | Description                               |
+| -------------- | ----------------------------------------- |
+| `--verbose`    | Show detailed rsync file list during sync |
+| `--no-install` | Skip dependency install                   |
+| `-h`, `--help` | Show help                                 |
 
 ### Sync
 
