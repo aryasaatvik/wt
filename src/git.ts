@@ -78,7 +78,7 @@ export function defaultBase(cwd: string): string | null {
   if (originHead) {
     const name = originHead.replace(/^refs\/remotes\/origin\//, "");
     const remote = `origin/${name}`;
-    if (Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", remote]).exitCode === 0) {
+    if (Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", `refs/remotes/${remote}`]).exitCode === 0) {
       return remote;
     }
   }
@@ -86,7 +86,7 @@ export function defaultBase(cwd: string): string | null {
     if (branchExists(cwd, candidate)) return candidate;
   }
   for (const candidate of ["main", "master", "dev"]) {
-    if (Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", `origin/${candidate}`]).exitCode === 0) {
+    if (Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", `refs/remotes/origin/${candidate}`]).exitCode === 0) {
       return `origin/${candidate}`;
     }
   }

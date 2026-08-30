@@ -169,6 +169,7 @@ describe("defaultBase", () => {
     const repo = makeRepo();
     try {
       repo.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/missing");
+      repo.git("branch", "origin/missing");
       expect(defaultBase(repo.dir)).toBe("main");
     } finally {
       repo.rm();
