@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cmdDu } from "../src/du.ts";
 import { measureDiskUsage } from "../src/disk.ts";
@@ -24,13 +24,15 @@ describe("owned disk accounting", () => {
       const reports = await measureDiskUsage(repo.dir, "fresh");
       const primary = reports.find((report) => report.primary)!;
       const linked = reports.find((report) => report.branch === "feat/lane")!;
+      const primaryUsage = primary.usage!;
+      const linkedUsage = linked.usage!;
 
-      expect(primary.usage.checkoutKb).toBeGreaterThan(0);
-      expect(primary.usage.privateGitKb).toBe(0);
-      expect(linked.usage.checkoutKb).toBeGreaterThanOrEqual(64);
-      expect(linked.usage.privateGitKb).toBeGreaterThanOrEqual(128);
-      expect(linked.usage.ownedKb).toBe(linked.usage.checkoutKb + linked.usage.privateGitKb);
-      expect(linked.usage.sharedKb).toBeGreaterThan(0);
+      expect(primaryUsage.checkoutKb).toBeGreaterThan(0);
+      expect(primaryUsage.privateGitKb).toBe(0);
+      expect(linkedUsage.checkoutKb).toBeGreaterThanOrEqual(64);
+      expect(linkedUsage.privateGitKb).toBeGreaterThanOrEqual(128);
+      expect(linkedUsage.ownedKb).toBe(linkedUsage.checkoutKb + linkedUsage.privateGitKb);
+      expect(linkedUsage.sharedKb).toBeGreaterThan(0);
 
       const cachePath = join(repo.gitIn(lane, "rev-parse", "--absolute-git-dir").trim(), "wt-size.json");
       expect(JSON.parse(readFileSync(cachePath, "utf8")).version).toBe(2);
@@ -38,13 +40,25 @@ describe("owned disk accounting", () => {
       const json = JSON.parse(await cmdDu({ cwd: repo.dir, target: "feat/lane", json: true, fresh: false }));
       expect(json).toHaveLength(1);
       expect(json[0].usage).toEqual(expect.objectContaining({
-        checkoutKb: linked.usage.checkoutKb,
-        privateGitKb: linked.usage.privateGitKb,
-        ownedKb: linked.usage.ownedKb,
+        checkoutKb: linkedUsage.checkoutKb,
+        privateGitKb: linkedUsage.privateGitKb,
+        ownedKb: linkedUsage.ownedKb,
       }));
     } finally {
       repo.rm();
       module.rm();
+    }
+  });
+
+  test("preserves missing registered worktrees with unavailable usage", async () => {
+    const repo = makeRepo();
+    try {
+      const lane = repo.addWorktree("missing", { branch: "feat/missing" });
+      rmSync(lane, { recursive: true, force: true });
+      const report = (await measureDiskUsage(repo.dir, "fresh")).find((item) => item.branch === "feat/missing");
+      expect(report?.usage).toBeNull();
+    } finally {
+      repo.rm();
     }
   });
 });

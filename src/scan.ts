@@ -3,7 +3,7 @@
 
 import { statSync } from "node:fs";
 import { basename } from "node:path";
-import { measureDiskUsage, type WorktreeDiskUsage } from "./disk.ts";
+import { measureDiskUsage, type WorktreeDiskReport, type WorktreeDiskUsage } from "./disk.ts";
 import { listWorktrees, originDefault, resolvePrimaryRepo, type WorktreeInfo } from "./git.ts";
 import { pool, runAsync } from "./term.ts";
 
@@ -265,7 +265,10 @@ export async function scanWorktrees(cwd: string, opts: ScanOptions = {}): Promis
   const prsPromise = fetchPrs(repoRoot, opts.env ?? process.env);
   const sizeMode = opts.sizeMode ?? "cached";
   const diskReports = sizeMode === "skip" ? [] : await measureDiskUsage(repoRoot, sizeMode);
-  const diskByPath = new Map(diskReports.map((report) => [report.path, report]));
+  const availableDisk = diskReports.filter(
+    (report): report is WorktreeDiskReport & { usage: WorktreeDiskUsage } => report.usage !== null,
+  );
+  const diskByPath = new Map(availableDisk.map((report) => [report.path, report]));
   const probed = await pool(worktrees, opts.concurrency ?? 10, (w) =>
     probe(w, repoRoot, defaultBranch, diskByPath.get(w.path) ?? null),
   );

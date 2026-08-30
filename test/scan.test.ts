@@ -184,6 +184,13 @@ describe("scanWorktrees", () => {
       expect(cached.sizeKb).toBe(424242);
       expect(cached.sizeCached).toBe(true);
 
+      // One corrupt cache does not invalidate a different lane's valid cache.
+      writeFileSync(primaryCache, "not json{");
+      const mixed = await scanWorktrees(repo.dir);
+      const stillCached = mixed.find((r) => r.slug === "lane")!;
+      expect(stillCached.sizeKb).toBe(424242);
+      expect(stillCached.sizeCached).toBe(true);
+
       // --fresh ignores a valid cache and rewrites it
       const forced = await scanWorktrees(repo.dir, { sizeMode: "fresh" });
       const remeasured = forced.find((r) => r.slug === "lane")!;

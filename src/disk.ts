@@ -15,7 +15,7 @@ export interface WorktreeDiskReport {
   branch: string | null;
   primary: boolean;
   cached: boolean;
-  usage: WorktreeDiskUsage;
+  usage: WorktreeDiskUsage | null;
 }
 
 export type DiskMode = "cached" | "fresh";
@@ -61,6 +61,7 @@ async function sumKb(paths: string[]): Promise<number> {
 }
 
 async function checkoutKb(worktree: string, metadata: RepoMetadata[]): Promise<number> {
+  if (!existsSync(worktree)) return 0;
   const entries = readdirSync(worktree).filter((name) => name !== ".git").map((name) => join(worktree, name));
   const total = await sumKb(entries);
   const topGit = join(worktree, ".git");
@@ -128,24 +129,29 @@ export async function measureDiskUsage(cwd: string, mode: DiskMode = "cached"): 
   const worktrees = listWorktrees(primary);
   const metadata = await Promise.all(worktrees.map((worktree) => metadataTree(worktree.path)));
   const cached = mode === "cached" ? metadata.map((tree) => readCache(cachePath(tree))) : metadata.map(() => null);
-  if (cached.every((usage) => usage !== null)) {
-    return worktrees.map((worktree, index) => ({
-      path: worktree.path,
-      branch: worktree.branch,
-      primary: worktree.path === primary,
-      cached: true,
-      usage: cached[index]!,
-    }));
-  }
 
   const privateByWorktree = metadata.map((tree) => minimalRoots(tree.filter((item) => item.gitDir !== item.commonDir).map((item) => item.gitDir)));
   const allPrivate = minimalRoots(privateByWorktree.flat());
   const sharedRoots = minimalRoots(metadata.flatMap((tree) => tree.map((item) => item.commonDir)));
-  const sharedTotal = await sumKb(sharedRoots);
-  const privateInsideShared = await sumKb(allPrivate.filter((path) => sharedRoots.some((root) => contains(root, path))));
-  const sharedKb = Math.max(0, sharedTotal - privateInsideShared);
+  const cachedShared = cached.find((usage) => typeof usage?.sharedKb === "number")?.sharedKb;
+  const sharedKb = cachedShared ?? Math.max(
+    0,
+    await sumKb(sharedRoots) - await sumKb(allPrivate.filter((path) => sharedRoots.some((root) => contains(root, path)))),
+  );
 
   const reports = await Promise.all(worktrees.map(async (worktree, index): Promise<WorktreeDiskReport> => {
+    if (!existsSync(worktree.path)) {
+      return { path: worktree.path, branch: worktree.branch, primary: false, cached: false, usage: null };
+    }
+    if (cached[index]) {
+      return {
+        path: worktree.path,
+        branch: worktree.branch,
+        primary: worktree.path === primary,
+        cached: true,
+        usage: cached[index],
+      };
+    }
     const tree = metadata[index]!;
     const checkoutSizeKb = await checkoutKb(worktree.path, tree);
     const privateGitKb = await sumKb(privateByWorktree[index]!);

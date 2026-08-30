@@ -21,13 +21,16 @@ function selectTarget(records: WorktreeDiskReport[], cwd: string, target: string
 
 export function renderDiskTable(records: WorktreeDiskReport[]): string {
   const header = "WORKTREE\tCHECKOUT\tPRIVATE GIT\tOWNED\tSHARED";
-  return [header, ...records.map((record) => [
-    record.primary ? `${basename(record.path)} (primary)` : basename(record.path),
-    humanSize(record.usage.checkoutKb),
-    humanSize(record.usage.privateGitKb),
-    humanSize(record.usage.ownedKb),
-    humanSize(record.usage.sharedKb ?? null),
-  ].join("\t"))].join("\n");
+  return [header, ...records.map((record) => {
+    const usage = record.usage;
+    return [
+      record.primary ? `${basename(record.path)} (primary)` : basename(record.path),
+      humanSize(usage?.checkoutKb ?? null),
+      humanSize(usage?.privateGitKb ?? null),
+      humanSize(usage?.ownedKb ?? null),
+      humanSize(usage?.sharedKb ?? null),
+    ].join("\t");
+  })].join("\n");
 }
 
 export async function cmdDu(options: DuOptions): Promise<string> {
