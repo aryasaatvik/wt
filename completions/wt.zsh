@@ -5,6 +5,7 @@ _wt() {
   local -a subcommands=(
     'new:Create worktree from base branch'
     'create:Create worktree from base branch'
+    'sync:Copy selected ignored files between worktrees'
     'rm:Remove worktree'
     'remove:Remove worktree'
     'ls:List all worktrees'
@@ -38,6 +39,15 @@ _wt() {
           elif [[ $CURRENT -eq 3 ]]; then
             _wt_branches
           fi
+          ;;
+        sync)
+          _arguments \
+            '--from[Source worktree]:source:(primary current)' \
+            '--to[Target branch or path]:target:_wt_worktree_targets' \
+            '--dry-run[Print plan without copying]' \
+            '--json[Print machine-readable plan]' \
+            '--force[Overwrite conflicting target files]'
+          return
           ;;
       esac
       ;;

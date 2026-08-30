@@ -4,7 +4,7 @@ Git worktree lifecycle tool: create with gitignored-file sync and dependency ins
 
 ## What it does
 
-1. Creates a worktree in `../<repo>-worktrees/<slug>/`, syncs gitignored config (`.env`, `.scratchpad`, editor/agent settings) from the source repo, and installs dependencies via [`ni`](https://github.com/antfu/ni)
+1. Creates a worktree in `../<repo>-worktrees/<slug>/`, syncs ignored files selected by `.worktreeinclude`, and installs dependencies via [`ni`](https://github.com/antfu/ni)
 2. `wt ls` shows every worktree's branch, dirty state, ahead/behind, PR state, size, and age as a table; `--json` for machines, `--all` for every repo under `~/Developer`. Bare `wt` on a TTY opens the same data as an interactive picker
 3. `wt rm` and `wt reap` remove worktrees through a safety pipeline that salvages unique scratchpad notes and refuses on env drift, never with `--force`
 
@@ -40,6 +40,9 @@ Requires: `git`, `rsync`, [`ni`](https://github.com/antfu/ni), and [`bun`](https
 wt x/my-feature           # create worktree from main
 wt new x/my-feature dev   # create from a specific base branch
 wt new x/my-feature --no-install
+wt sync --dry-run          # preview primary -> current worktree
+wt sync --dry-run --json   # machine-readable plan
+wt sync --from current --to x/other
 wt rm x/my-feature        # remove worktree by branch (keeps branch)
 wt rm lane-1              # remove by directory name — how detached worktrees are addressed
 wt rm ../myrepo-worktrees/lane-1   # remove by path
@@ -97,18 +100,43 @@ Branch slashes are converted to dashes for the directory name.
 
 ### File sync
 
-`wt new` copies gitignored **config**, not every ignored file. The allowlist is:
+When the repository has a `.worktreeinclude`, it is the source of truth for file sync. Patterns use Git's ignore syntax, including comments, `!` negation, `/` anchoring, and `**`:
+
+```gitignore
+# Local development environment
+/.env
+
+# Active scratchpad entrypoints
+/.scratchpad/README.md
+/.scratchpad/STATE.md
+
+# Local agent preferences
+/.claude/settings.local.json
+```
+
+A path is copied only when it is ignored in both the source and target worktree, selected by `.worktreeinclude`, and not excluded by user configuration or hard safety rules. Tracked files are never copied. Existing target files are reported as conflicts and left untouched unless `--force` is explicit; identical files are skipped.
+
+Without `.worktreeinclude`, wt 2.x retains the legacy config allowlist and prints a notice:
 
 - **Env**: `.env`, `.env.*`, `.dev.vars` (never `*.example`), at any depth
 - **Scratchpad**: `.scratchpad/`
 - **Editor**: `.vscode/`, `.idea/`, `.zed/`
 - **Agent**: `.claude/` except `.claude/worktrees`
 
-`git ls-files` is constrained to those pathspecs, so ignored artifact trees (`apps/e2e/runs/`, `.alchemy/`, `node_modules`, …) are never listed. `SYNC_EXCLUDE` remains a backstop for allowlisted paths that still must stay lane-local (`.claude/worktrees`, `node_modules`, `.playwright`, …). Prefix matching still applies to directory components (`DerivedData` also excludes `DerivedDataDevice`).
+Set `sync.requireInclude = true` to copy nothing from repositories without a manifest. User exclusions are subtractive and use the same pattern syntax:
+
+```toml
+# ~/.config/wt/config.toml
+[sync]
+requireInclude = true
+exclude = [".env.production*", ".scratchpad/archive/**"]
+```
+
+There is deliberately no `.worktreeignore`: repository policy stays in one ordered pattern file, where `!` rules express exceptions, and machine-specific exclusions stay in user configuration. Hard exclusions are limited to Git and worktree-manager ownership state (`.git`, `.claude/worktrees`, `.conductor`), so a repository may explicitly include a large cache when that is intentional.
 
 Dangling symlinks on the allowlist are recreated with `symlink` rather than handed to rsync. macOS openrsync `stat()`s the missing target and would otherwise fail the whole create (rsync exit 23).
 
-If file sync fails, `wt` exits nonzero and prints the captured error output.
+`wt sync` defaults to primary → current and supports `--from primary|current|<path>`, `--to <branch|path>`, `--dry-run`, `--json`, and `--force`. If file sync fails, `wt` exits nonzero and prints the captured error output. Creation records the source, manifest hash, copied paths, file count, and byte count in the worktree's `wt.json` marker.
 
 ## Agent integration
 
