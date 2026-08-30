@@ -151,7 +151,7 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
     syncSpin.stop();
     marker.phase = "incomplete";
     marker.failure = e instanceof Error ? e.message : String(e);
-    marker.recoveryCommand = `wt sync --to ${shellQuote(branch)}`;
+    marker.recoveryCommand = `wt sync --to ${shellQuote(wtDir)}`;
     writeProvenance(wtDir, marker);
     err("Failed to sync gitignored files");
     detail(marker.failure);
@@ -184,9 +184,21 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
     writeProvenance(wtDir, marker);
     info("Installing dependencies");
     console.log("");
-    const code = opts.installRunner
-      ? await opts.installRunner(wtDir)
-      : await Bun.spawn(["ni"], { cwd: wtDir, stdout: "inherit", stderr: "inherit" }).exited;
+    let code: number;
+    try {
+      code = opts.installRunner
+        ? await opts.installRunner(wtDir)
+        : await Bun.spawn(["ni"], { cwd: wtDir, stdout: "inherit", stderr: "inherit" }).exited;
+    } catch (e) {
+      marker.phase = "incomplete";
+      marker.failure = `dependency install failed: ${e instanceof Error ? e.message : String(e)}`;
+      marker.recoveryCommand = `cd ${shellQuote(wtDir)} && ni`;
+      writeProvenance(wtDir, marker);
+      console.log("");
+      err("Dependency install failed");
+      detail(`${marker.failure}\nWorktree kept at ${wtDir}\nRetry with: ${marker.recoveryCommand}`);
+      throw new ExitError(1);
+    }
     console.log("");
     if (code === 0) log("Dependencies installed");
     else {

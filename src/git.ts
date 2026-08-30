@@ -77,7 +77,7 @@ export function defaultBase(cwd: string): string | null {
   const originHead = run(["git", "-C", cwd, "symbolic-ref", "refs/remotes/origin/HEAD"]).trim();
   if (originHead) {
     const name = originHead.replace(/^refs\/remotes\/origin\//, "");
-    return branchExists(cwd, name) ? name : `origin/${name}`;
+    return `origin/${name}`;
   }
   for (const candidate of ["main", "master", "dev"]) {
     if (branchExists(cwd, candidate)) return candidate;

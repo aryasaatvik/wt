@@ -123,6 +123,32 @@ describe("cmdNew", () => {
       repo.rm();
     }
   });
+
+  test("records incomplete when the installer throws", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write("package.json", '{"packageManager":"bun@1.4.0"}\n');
+      repo.commit("package manager");
+      let failure: unknown;
+      try {
+        await cmdNew("feat/install-throws", "main", {
+          ...OPTS,
+          cwd: repo.dir,
+          install: true,
+          installRunner: async () => { throw new Error("spawn EACCES"); },
+        });
+      } catch (error) { failure = error; }
+      expect(failure).toBeInstanceOf(ExitError);
+      const wtDir = join(repo.root, "repo-worktrees", "feat-install-throws");
+      expect(readProvenance(wtDir)).toEqual(expect.objectContaining({
+        phase: "incomplete",
+        failure: "dependency install failed: spawn EACCES",
+        recoveryCommand: `cd '${wtDir}' && ni`,
+      }));
+    } finally {
+      repo.rm();
+    }
+  });
 });
 
 describe("defaultBase", () => {
@@ -133,7 +159,7 @@ describe("defaultBase", () => {
       repo.addOrigin();
       repo.git("push", "origin", "trunk");
       repo.git("remote", "set-head", "origin", "trunk");
-      expect(defaultBase(repo.dir)).toBe("trunk");
+      expect(defaultBase(repo.dir)).toBe("origin/trunk");
     } finally {
       repo.rm();
     }
