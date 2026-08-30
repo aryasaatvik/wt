@@ -170,12 +170,31 @@ const libcLibrary = dlopen(libcPath, {
     returns: FFIType.i32,
   },
   symlinkat: { args: [FFIType.cstring, FFIType.i32, FFIType.cstring], returns: FFIType.i32 },
+  unlinkat: { args: [FFIType.i32, FFIType.cstring, FFIType.i32], returns: FFIType.i32 },
   readlinkat: {
     args: [FFIType.i32, FFIType.cstring, FFIType.ptr, FFIType.u64],
     returns: FFIType.i64,
   },
 });
 const libc = libcLibrary.symbols;
+const renameNoReplaceHandle = (() => {
+  if (process.platform === "darwin") {
+    const library = dlopen(libcPath, {
+      renameatx_np: {
+        args: [FFIType.i32, FFIType.cstring, FFIType.i32, FFIType.cstring, FFIType.u32],
+        returns: FFIType.i32,
+      },
+    });
+    return { library, call: library.symbols.renameatx_np, flag: 0x4 };
+  }
+  const library = dlopen(libcPath, {
+      renameat2: {
+        args: [FFIType.i32, FFIType.cstring, FFIType.i32, FFIType.cstring, FFIType.u32],
+        returns: FFIType.i32,
+      },
+  });
+  return { library, call: library.symbols.renameat2, flag: 0x1 };
+})();
 
 function cString(value: string): Buffer {
   if (value.includes("\0")) throw new Error("sync path contains NUL");
@@ -234,6 +253,16 @@ function readlinkAt(parentFd: number, name: string): string {
   return buffer.subarray(0, length).toString();
 }
 
+function unlinkAt(parentFd: number, name: string): void {
+  libc.unlinkat(parentFd, cString(name), 0);
+}
+
+function renameNoReplace(parentFd: number, source: string, destination: string): number {
+  return renameNoReplaceHandle.call(
+    parentFd, cString(source), parentFd, cString(destination), renameNoReplaceHandle.flag,
+  );
+}
+
 export function copyFileNoFollowAt(
   sourceParent: number,
   sourceName: string,
@@ -274,8 +303,6 @@ export function copyFileNoFollowAt(
     fchmodSync(destinationFd, stat.mode);
     futimesSync(destinationFd, stat.atime, stat.mtime);
   } finally {
-    // Keep a partial destination on failure: unlinking by name could delete a
-    // concurrent replacement after another process moved our inode away.
     if (destinationFd !== null && destinationFd >= 0) closeSync(destinationFd);
     if (sourceFd !== null && sourceFd >= 0) closeSync(sourceFd);
   }
@@ -357,15 +384,17 @@ function copyDanglingSymlink(repoRoot: string, wtDir: string, rel: string, force
   try {
     destination = openSafeParent(wtDir, rel, true);
     const linkTarget = readlinkAt(source.fd, source.name);
-    const name = force ? `.wt-sync-${randomUUID()}` : destination.name;
-    if (libc.symlinkat(cString(linkTarget), destination.fd, cString(name)) < 0) {
-      throw new Error(`target changed while copying: ${rel}`);
-    }
-    if (
-      force &&
-      libc.renameat(destination.fd, cString(name), destination.fd, cString(destination.name)) < 0
-    ) {
-      throw new Error(`target changed while copying: ${rel}`);
+    const temp = `.wt-sync-${randomUUID()}`;
+    try {
+      if (libc.symlinkat(cString(linkTarget), destination.fd, cString(temp)) < 0) {
+        throw new Error(`target changed while copying: ${rel}`);
+      }
+      const renamed = force
+        ? libc.renameat(destination.fd, cString(temp), destination.fd, cString(destination.name))
+        : renameNoReplace(destination.fd, temp, destination.name);
+      if (renamed < 0) throw new Error(`target changed while copying: ${rel}`);
+    } finally {
+      unlinkAt(destination.fd, temp);
     }
   } finally {
     if (destination) closeSync(destination.fd);
@@ -384,16 +413,15 @@ function copyOne(
   let destination: SafeParent | null = null;
   try {
     destination = openSafeParent(wtDir, rel, true);
-    if (force) {
-      const temp = `.wt-sync-${randomUUID()}`;
+    const temp = `.wt-sync-${randomUUID()}`;
+    try {
       copyFileNoFollowAt(source.fd, source.name, destination.fd, temp);
-      if (
-        libc.renameat(destination.fd, cString(temp), destination.fd, cString(destination.name)) < 0
-      ) {
-        throw new Error(`target changed while copying: ${rel}`);
-      }
-    } else {
-      copyFileNoFollowAt(source.fd, source.name, destination.fd, destination.name);
+      const renamed = force
+        ? libc.renameat(destination.fd, cString(temp), destination.fd, cString(destination.name))
+        : renameNoReplace(destination.fd, temp, destination.name);
+      if (renamed < 0) throw new Error(`target changed while copying: ${rel}`);
+    } finally {
+      unlinkAt(destination.fd, temp);
     }
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
