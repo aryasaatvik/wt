@@ -62,13 +62,30 @@ export function listWorktrees(cwd: string): WorktreeInfo[] {
   return entries;
 }
 
-/** origin's default branch: origin/HEAD if set, else the first of main/master/dev that exists. */
+/** origin's default branch: origin/HEAD if set, else the first remote main/master/dev ref. */
 export function originDefault(cwd: string): string | null {
   const ref = run(["git", "-C", cwd, "symbolic-ref", "refs/remotes/origin/HEAD"]).trim();
   if (ref) return ref.replace(/^refs\/remotes\/origin\//, "");
   for (const cand of ["main", "master", "dev"]) {
-    const r = Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", `origin/${cand}`]);
-    if (r.exitCode === 0) return cand;
+    if (Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", `origin/${cand}`]).exitCode === 0) return cand;
+  }
+  return null;
+}
+
+/** Resolve the ref used by `wt new` when the caller omitted a base. */
+export function defaultBase(cwd: string): string | null {
+  const originHead = run(["git", "-C", cwd, "symbolic-ref", "refs/remotes/origin/HEAD"]).trim();
+  if (originHead) {
+    const name = originHead.replace(/^refs\/remotes\/origin\//, "");
+    return branchExists(cwd, name) ? name : `origin/${name}`;
+  }
+  for (const candidate of ["main", "master", "dev"]) {
+    if (branchExists(cwd, candidate)) return candidate;
+  }
+  for (const candidate of ["main", "master", "dev"]) {
+    if (Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", `origin/${candidate}`]).exitCode === 0) {
+      return `origin/${candidate}`;
+    }
   }
   return null;
 }

@@ -37,7 +37,7 @@ Worktree task?
 wt x/my-feature
 
 # Explicit create
-wt new x/my-feature
+wt new x/my-feature # origin/HEAD, then local main/master/dev
 wt create x/my-feature
 
 # From a specific base branch
@@ -53,6 +53,8 @@ Steps performed:
 1. `git worktree add -b <branch> <path> <base>`
 2. Sync gitignored config (env, scratchpad, editor/agent settings) via rsync
 3. Run `ni` to install dependencies when a lockfile or `packageManager` field identifies the package manager
+
+If install fails, wt exits nonzero but keeps the worktree. Read its `wt.json` phase/failure/recovery command or run the printed `cd <worktree> && ni`; an incomplete lane is never reported ready.
 
 ### Remove
 
