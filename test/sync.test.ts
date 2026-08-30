@@ -227,3 +227,26 @@ test("applySyncPlan rejects a symlinked destination parent", async () => {
     rmSync(outside, { recursive: true, force: true });
   }
 });
+
+test("forced sync replaces a leaf symlink without touching its referent", async () => {
+  const repo = makeRepo();
+  const outside = mkdtempSync(join(tmpdir(), "wt-sync-outside-"));
+  try {
+    repo.write(".gitignore", ".env\n");
+    repo.write(".worktreeinclude", ".env\n");
+    repo.commit("policy");
+    const target = repo.addWorktree("lane", { branch: "lane" });
+    repo.write(".env", "source\n");
+    const referent = join(outside, "referent");
+    writeFileSync(referent, "outside\n");
+    symlinkSync(referent, join(target, ".env"));
+    const plan = await planSync(repo.dir, target, { force: true, config: { requireInclude: false, exclude: [] } });
+    await applySyncPlan(plan);
+    expect(lstatSync(join(target, ".env")).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(target, ".env"), "utf8")).toBe("source\n");
+    expect(readFileSync(referent, "utf8")).toBe("outside\n");
+  } finally {
+    repo.rm();
+    rmSync(outside, { recursive: true, force: true });
+  }
+});

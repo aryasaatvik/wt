@@ -8,13 +8,14 @@ import {
   readFileSync,
   readlinkSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { runAsync } from "./term.ts";
 
 const ENV_BASENAME = /^(\.env(\..+)?|\.dev\.vars)$/;
@@ -243,9 +244,19 @@ export function classifyCopy(repoRoot: string, rel: string): CopyKind {
 
 function copyDanglingSymlink(repoRoot: string, wtDir: string, rel: string, force: boolean): void {
   const dest = ensureSafeParent(wtDir, rel);
-  if (force && lstatExists(dest)) rmSync(dest);
+  const linkTarget = readlinkSync(join(repoRoot, rel));
+  if (force) {
+    const temp = join(dirname(dest), `.wt-sync-${randomUUID()}`);
+    try {
+      symlinkSync(linkTarget, temp);
+      renameSync(temp, dest);
+    } finally {
+      if (lstatExists(temp)) rmSync(temp);
+    }
+    return;
+  }
   try {
-    symlinkSync(readlinkSync(join(repoRoot, rel)), dest);
+    symlinkSync(linkTarget, dest);
   } catch (e) {
     if (!force && (e as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`target changed while copying: ${rel}`);
     throw e;
@@ -255,7 +266,17 @@ function copyDanglingSymlink(repoRoot: string, wtDir: string, rel: string, force
 function copyOne(repoRoot: string, wtDir: string, rel: string, verbose: boolean, force: boolean): void {
   const dest = ensureSafeParent(wtDir, rel);
   try {
-    copyFileSync(join(repoRoot, rel), dest, force ? 0 : constants.COPYFILE_EXCL);
+    if (force) {
+      const temp = join(dirname(dest), `.wt-sync-${randomUUID()}`);
+      try {
+        copyFileSync(join(repoRoot, rel), temp, constants.COPYFILE_EXCL);
+        renameSync(temp, dest);
+      } finally {
+        if (lstatExists(temp)) rmSync(temp);
+      }
+    } else {
+      copyFileSync(join(repoRoot, rel), dest, constants.COPYFILE_EXCL);
+    }
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (!force && (code === "EEXIST" || code === "EISDIR")) throw new Error(`target changed while copying: ${rel}`);
