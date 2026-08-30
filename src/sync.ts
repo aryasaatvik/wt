@@ -6,22 +6,20 @@ import {
   fstatSync,
   futimesSync,
   lstatSync,
-  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
   readlinkSync,
   realpathSync,
-  renameSync,
   rmSync,
-  symlinkSync,
   readSync,
   writeSync,
   writeFileSync,
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
+import { dlopen, FFIType } from "bun:ffi";
 import { runAsync } from "./term.ts";
 
 const ENV_BASENAME = /^(\.env(\..+)?|\.dev\.vars)$/;
@@ -163,19 +161,82 @@ function lstatExists(path: string): boolean {
   try { lstatSync(path); return true; } catch { return false; }
 }
 
-function ensureSafeParent(root: string, rel: string): string {
-  const canonicalRoot = realpathSync.native(root);
-  let parent = canonicalRoot;
-  for (const component of rel.split("/").slice(0, -1)) {
-    if (!component || component === "." || component === "..") throw new Error(`unsafe sync path: ${rel}`);
-    parent = join(parent, component);
-    if (!lstatExists(parent)) mkdirSync(parent);
-    const stat = lstatSync(parent);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`unsafe symlink or non-directory parent: ${rel}`);
-    const canonicalParent = realpathSync.native(parent);
-    if (!canonicalParent.startsWith(`${canonicalRoot}/`)) throw new Error(`sync path escapes target: ${rel}`);
+const libcPath = process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6";
+const libcLibrary = dlopen(libcPath, {
+  openat: { args: [FFIType.i32, FFIType.cstring, FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+  mkdirat: { args: [FFIType.i32, FFIType.cstring, FFIType.i32], returns: FFIType.i32 },
+  renameat: {
+    args: [FFIType.i32, FFIType.cstring, FFIType.i32, FFIType.cstring],
+    returns: FFIType.i32,
+  },
+  symlinkat: { args: [FFIType.cstring, FFIType.i32, FFIType.cstring], returns: FFIType.i32 },
+  unlinkat: { args: [FFIType.i32, FFIType.cstring, FFIType.i32], returns: FFIType.i32 },
+  readlinkat: {
+    args: [FFIType.i32, FFIType.cstring, FFIType.ptr, FFIType.u64],
+    returns: FFIType.i64,
+  },
+});
+const libc = libcLibrary.symbols;
+
+function cString(value: string): Buffer {
+  if (value.includes("\0")) throw new Error("sync path contains NUL");
+  return Buffer.from(`${value}\0`);
+}
+
+interface SafeParent {
+  fd: number;
+  name: string;
+}
+
+/** Resolve parents relative to held directory descriptors so path replacement cannot redirect I/O. */
+function openSafeParent(root: string, rel: string, create: boolean): SafeParent {
+  const components = rel.split("/");
+  if (components.some((component) => !component || component === "." || component === "..")) {
+    throw new Error(`unsafe sync path: ${rel}`);
   }
-  return join(parent, basename(rel));
+  let fd = openSync(
+    realpathSync.native(root),
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  );
+  try {
+    for (const component of components.slice(0, -1)) {
+      const name = cString(component);
+      let child = libc.openat(
+        fd,
+        name,
+        constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+        0,
+      );
+      if (child < 0 && create) {
+        libc.mkdirat(fd, name, 0o777);
+        child = libc.openat(
+          fd,
+          name,
+          constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+          0,
+        );
+      }
+      if (child < 0) throw new Error(`unsafe symlink or non-directory parent: ${rel}`);
+      closeSync(fd);
+      fd = child;
+    }
+    return { fd, name: components.at(-1)! };
+  } catch (error) {
+    closeSync(fd);
+    throw error;
+  }
+}
+
+function unlinkAt(parentFd: number, name: string): void {
+  libc.unlinkat(parentFd, cString(name), 0);
+}
+
+function readlinkAt(parentFd: number, name: string): string {
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  const length = Number(libc.readlinkat(parentFd, cString(name), buffer, buffer.length));
+  if (length < 0 || length === buffer.length)
+    throw new Error(`sync source is not a readable symlink: ${name}`);
+  return buffer.subarray(0, length).toString();
 }
 
 export function copyFileNoFollow(source: string, destination: string): void {
@@ -205,6 +266,56 @@ export function copyFileNoFollow(source: string, destination: string): void {
   } finally {
     if (destinationFd !== null) closeSync(destinationFd);
     if (sourceFd !== null) closeSync(sourceFd);
+  }
+}
+
+export function copyFileNoFollowAt(
+  sourceParent: number,
+  sourceName: string,
+  destinationParent: number,
+  destinationName: string,
+): void {
+  let sourceFd: number | null = null;
+  let destinationFd: number | null = null;
+  let destinationCreated = false;
+  try {
+    sourceFd = libc.openat(
+      sourceParent,
+      cString(sourceName),
+      constants.O_RDONLY | constants.O_NOFOLLOW,
+      0,
+    );
+    if (sourceFd < 0) throw new Error(`sync source changed while copying: ${sourceName}`);
+    const stat = fstatSync(sourceFd);
+    if (!stat.isFile()) throw new Error(`sync source is not a regular file: ${sourceName}`);
+    destinationFd = libc.openat(
+      destinationParent,
+      cString(destinationName),
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      stat.mode,
+    );
+    if (destinationFd < 0)
+      throw Object.assign(new Error(`target changed while copying: ${destinationName}`), {
+        code: "EEXIST",
+      });
+    destinationCreated = true;
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let offset = 0;
+    while (true) {
+      const read = readSync(sourceFd, buffer, 0, buffer.length, offset);
+      if (read === 0) break;
+      let written = 0;
+      while (written < read) written += writeSync(destinationFd, buffer, written, read - written);
+      offset += read;
+    }
+    fchmodSync(destinationFd, stat.mode);
+    futimesSync(destinationFd, stat.atime, stat.mtime);
+  } catch (error) {
+    if (destinationCreated) unlinkAt(destinationParent, destinationName);
+    throw error;
+  } finally {
+    if (destinationFd !== null && destinationFd >= 0) closeSync(destinationFd);
+    if (sourceFd !== null && sourceFd >= 0) closeSync(sourceFd);
   }
 }
 
@@ -279,44 +390,63 @@ export function classifyCopy(repoRoot: string, rel: string): CopyKind {
 }
 
 function copyDanglingSymlink(repoRoot: string, wtDir: string, rel: string, force: boolean): void {
-  const dest = ensureSafeParent(wtDir, rel);
-  const linkTarget = readlinkSync(join(repoRoot, rel));
-  if (force) {
-    const temp = join(dirname(dest), `.wt-sync-${randomUUID()}`);
-    try {
-      symlinkSync(linkTarget, temp);
-      renameSync(temp, dest);
-    } finally {
-      if (lstatExists(temp)) rmSync(temp);
-    }
-    return;
-  }
+  const source = openSafeParent(repoRoot, rel, false);
+  let destination: SafeParent | null = null;
   try {
-    symlinkSync(linkTarget, dest);
-  } catch (e) {
-    if (!force && (e as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`target changed while copying: ${rel}`);
-    throw e;
+    destination = openSafeParent(wtDir, rel, true);
+    const linkTarget = readlinkAt(source.fd, source.name);
+    const name = force ? `.wt-sync-${randomUUID()}` : destination.name;
+    if (libc.symlinkat(cString(linkTarget), destination.fd, cString(name)) < 0) {
+      throw new Error(`target changed while copying: ${rel}`);
+    }
+    if (
+      force &&
+      libc.renameat(destination.fd, cString(name), destination.fd, cString(destination.name)) < 0
+    ) {
+      unlinkAt(destination.fd, name);
+      throw new Error(`target changed while copying: ${rel}`);
+    }
+  } finally {
+    if (destination) closeSync(destination.fd);
+    closeSync(source.fd);
   }
 }
 
-function copyOne(repoRoot: string, wtDir: string, rel: string, verbose: boolean, force: boolean): void {
-  const dest = ensureSafeParent(wtDir, rel);
+function copyOne(
+  repoRoot: string,
+  wtDir: string,
+  rel: string,
+  verbose: boolean,
+  force: boolean,
+): void {
+  const source = openSafeParent(repoRoot, rel, false);
+  let destination: SafeParent | null = null;
   try {
+    destination = openSafeParent(wtDir, rel, true);
     if (force) {
-      const temp = join(dirname(dest), `.wt-sync-${randomUUID()}`);
+      const temp = `.wt-sync-${randomUUID()}`;
       try {
-        copyFileNoFollow(join(repoRoot, rel), temp);
-        renameSync(temp, dest);
+        copyFileNoFollowAt(source.fd, source.name, destination.fd, temp);
+        if (
+          libc.renameat(destination.fd, cString(temp), destination.fd, cString(destination.name)) <
+          0
+        ) {
+          throw new Error(`target changed while copying: ${rel}`);
+        }
       } finally {
-        if (lstatExists(temp)) rmSync(temp);
+        unlinkAt(destination.fd, temp);
       }
     } else {
-      copyFileNoFollow(join(repoRoot, rel), dest);
+      copyFileNoFollowAt(source.fd, source.name, destination.fd, destination.name);
     }
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
-    if (!force && (code === "EEXIST" || code === "EISDIR")) throw new Error(`target changed while copying: ${rel}`);
+    if (!force && (code === "EEXIST" || code === "EISDIR"))
+      throw new Error(`target changed while copying: ${rel}`);
     throw e;
+  } finally {
+    if (destination) closeSync(destination.fd);
+    closeSync(source.fd);
   }
   if (verbose) console.log(rel);
 }

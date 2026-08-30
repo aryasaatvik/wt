@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { slugFor } from "../src/create.ts";
-import { applySyncPlan, classifyCopy, copyFileNoFollow, isAllowed, isExcluded, isEnvFile, planSync, readSyncConfig, syncFiles } from "../src/sync.ts";
+import { applySyncPlan, classifyCopy, copyFileNoFollow, copyFileNoFollowAt, isAllowed, isExcluded, isEnvFile, planSync, readSyncConfig, syncFiles } from "../src/sync.ts";
 import { makeRepo } from "./harness.ts";
 
 describe("slugFor", () => {
@@ -184,6 +184,35 @@ test("copyFileNoFollow rejects a symlink source without creating a target", () =
     expect(existsSync(join(root, "target"))).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("copyFileNoFollowAt stays anchored when a destination parent is replaced", () => {
+  const source = mkdtempSync(join(tmpdir(), "wt-copy-source-"));
+  const target = mkdtempSync(join(tmpdir(), "wt-copy-target-"));
+  const outside = mkdtempSync(join(tmpdir(), "wt-copy-outside-"));
+  mkdirSync(join(target, "parent"));
+  writeFileSync(join(source, "source"), "safe\n");
+  const sourceFd = openSync(
+    source,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  );
+  const destinationFd = openSync(
+    join(target, "parent"),
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  );
+  try {
+    renameSync(join(target, "parent"), join(target, "moved"));
+    symlinkSync(outside, join(target, "parent"));
+    copyFileNoFollowAt(sourceFd, "source", destinationFd, "copied");
+    expect(readFileSync(join(target, "moved/copied"), "utf8")).toBe("safe\n");
+    expect(existsSync(join(outside, "copied"))).toBe(false);
+  } finally {
+    closeSync(destinationFd);
+    closeSync(sourceFd);
+    rmSync(source, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });
 
