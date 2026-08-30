@@ -66,6 +66,29 @@ describe("cmdNew", () => {
       repo.rm();
     }
   });
+
+  test("uses .worktreeinclude and records sync provenance", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write(".gitignore", ".env\n.scratchpad/\n");
+      repo.write(".worktreeinclude", "/.env\n");
+      repo.commit("sync manifest");
+      repo.write(".env", "A=1\n");
+      repo.write(".scratchpad/STATE.md", "not selected\n");
+
+      const wtDir = await cmdNew("feat/manifest", "main", { ...OPTS, cwd: repo.dir });
+      const marker = readProvenance(wtDir);
+      expect(existsSync(join(wtDir, ".env"))).toBe(true);
+      expect(existsSync(join(wtDir, ".scratchpad/STATE.md"))).toBe(false);
+      expect(marker?.sync?.mode).toBe("manifest");
+      expect(marker?.sync?.manifestHash).toHaveLength(64);
+      expect(marker?.sync?.copiedPaths).toEqual([".env"]);
+      expect(marker?.sync?.copiedFiles).toBe(1);
+      expect(marker?.sync?.copiedBytes).toBe(4);
+    } finally {
+      repo.rm();
+    }
+  });
 });
 
 describe("resolvePrimaryRepo", () => {

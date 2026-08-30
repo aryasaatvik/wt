@@ -18,6 +18,11 @@ ${bold("Commands:")}
                        Create worktree from base branch (default: main)
                        Checks out the branch if it already exists
                        Extra flags are passed to git worktree add
+  wt sync [flags]       Copy selected ignored files between worktrees
+                       --from primary|current|<path>  source (default: primary)
+                       --to <branch|path>             target (default: current)
+                       --dry-run  plan only · --json  machine-readable plan
+                       --force    overwrite conflicting target files
   wt rm|remove <target> [flags]
                        Remove worktree (keeps branch by default)
                        <target> is a branch name, worktree dir name, or path —
@@ -153,6 +158,41 @@ if (command === "reap") {
     spin.stop();
     exitFrom(e);
   }
+}
+
+if (command === "sync") {
+  let from: string | undefined;
+  let to: string | undefined;
+  let dryRun = false;
+  let json = false;
+  let force = false;
+  const rest = args.slice(1);
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i]!;
+    if (arg === "--from" || arg === "--to") {
+      const value = rest[++i];
+      if (!value) {
+        err(`${arg} expects a value`);
+        process.exit(1);
+      }
+      if (arg === "--from") from = value;
+      else to = value;
+    } else if (arg === "--dry-run") dryRun = true;
+    else if (arg === "--json") json = true;
+    else if (arg === "--force") force = true;
+    else {
+      err(`unknown flag for wt sync: ${arg}`);
+      process.exit(1);
+    }
+  }
+  try {
+    const { cmdSync, renderSyncPlan } = await import("./sync-command.ts");
+    const result = await cmdSync({ cwd, from, to, dryRun, json, force, verbose });
+    console.log(json ? JSON.stringify(result, null, 2) : renderSyncPlan(result.plan));
+  } catch (e) {
+    exitFrom(e);
+  }
+  process.exit(0);
 }
 
 if (command === "rm" || command === "remove") {

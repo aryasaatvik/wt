@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { branchExists, resolvePrimaryRepo } from "./git.ts";
-import { computeSyncFiles, syncFiles } from "./sync.ts";
+import { applySyncPlan, planSync } from "./sync.ts";
 import { bold, dim, run, runAsync, spinner } from "./term.ts";
 import { detail, err, ExitError, info, log } from "./ui.ts";
 
@@ -49,6 +49,14 @@ export interface ProvenanceMarker {
   branch: string;
   base: string | null;
   syncedFiles: string[];
+  sync?: {
+    source: string;
+    mode: "manifest" | "legacy" | "none";
+    manifestHash: string | null;
+    copiedPaths: string[];
+    copiedFiles: number;
+    copiedBytes: number;
+  };
 }
 
 export function readProvenance(wtDir: string): ProvenanceMarker | null {
@@ -92,12 +100,15 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
 
   info("Syncing gitignored files");
   let synced: string[] = [];
+  let syncPlan: Awaited<ReturnType<typeof planSync>> | null = null;
   const syncSpin = spinner("Syncing files");
   try {
-    synced = await computeSyncFiles(repoRoot, wtDir);
-    if (synced.length > 0) {
-      syncSpin.update(`Syncing ${synced.length} files`);
-      synced = await syncFiles(repoRoot, wtDir, synced, opts.verbose);
+    syncPlan = await planSync(repoRoot, wtDir);
+    if (syncPlan.mode === "legacy") info("No .worktreeinclude found; using v2 legacy sync defaults");
+    const copyCount = syncPlan.summary.copy;
+    if (copyCount > 0) {
+      syncSpin.update(`Syncing ${copyCount} files`);
+      synced = await applySyncPlan(syncPlan, opts.verbose);
     }
     syncSpin.stop();
     if (synced.length === 0) log("No gitignored files to sync");
@@ -114,6 +125,16 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
     branch,
     base: existing ? null : base,
     syncedFiles: synced,
+    sync: syncPlan
+      ? {
+          source: syncPlan.source,
+          mode: syncPlan.mode,
+          manifestHash: syncPlan.manifestHash,
+          copiedPaths: synced,
+          copiedFiles: synced.length,
+          copiedBytes: syncPlan.bytesToCopy,
+        }
+      : undefined,
   };
   // The marker is advisory (consumers fall back to walking the worktree), so
   // neither an unresolvable git dir nor a failed write may fail an

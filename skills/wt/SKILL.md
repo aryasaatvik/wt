@@ -5,7 +5,7 @@ description: "Git worktree helper that creates worktrees with gitignored file sy
 
 # wt - Git Worktree Helper
 
-Quickly spin up git worktrees with all gitignored config files synced and dependencies installed.
+Quickly spin up git worktrees with explicitly selected ignored files synced and dependencies installed.
 
 ## When to use
 - Create a new worktree for parallel feature development
@@ -23,6 +23,7 @@ Worktree task?
 ├─ Branch off non-main    → wt new x/my-feature develop
 ├─ Done with branch       → wt rm x/my-feature
 ├─ See worktree status    → wt ls  (always inline; bare `wt` is a TTY picker — never use it)
+├─ Preview ignored sync   → wt sync --dry-run --json
 ├─ Fleet-wide inventory   → wt ls --all --json
 └─ Clean up landed lanes  → wt reap   (dry run; --apply to remove)
 ```
@@ -99,18 +100,29 @@ Open or unknown PR state vetoes automatic removal. PUSHED_ONLY lanes require a c
 | `--no-install` | Skip dependency install |
 | `-h`, `--help` | Show help |
 
+### Sync
+
+```bash
+wt sync --dry-run                   # primary -> current
+wt sync --dry-run --json            # inspect exact actions and bytes
+wt sync --from current --to feat/x  # explicit lanes
+wt sync --force                     # overwrite reported conflicts
+```
+
+Prefer a tracked `.worktreeinclude` with Git ignore syntax. A file must be ignored by source and target, selected by the manifest, and not excluded by `~/.config/wt/config.toml`. Existing target files are never overwritten without `--force`.
+
 ## File Sync
 
-The sync step copies gitignored **config** from the source repo, not every ignored file. Allowlist (`src/sync.ts`):
+The sync step uses `.worktreeinclude` as repository policy. Without one, wt 2.x warns and retains this legacy allowlist:
 
 - **Env**: `.env`, `.env.*`, `.dev.vars` (never `*.example`)
 - **Scratchpad**: `.scratchpad/`
 - **Editor**: `.vscode/`, `.idea/`, `.zed/`
 - **Agent**: `.claude/` except `.claude/worktrees`
 
-Listing uses those pathspecs, so artifact trees (`apps/e2e/runs/`, `.alchemy/`) are never candidates. `SYNC_EXCLUDE` is a backstop for allowlisted paths that must stay lane-local. Dangling allowlisted symlinks are recreated as links; they are not passed to rsync (macOS openrsync fails `stat()` on a missing target).
+Set `sync.requireInclude = true` under `[sync]` in `~/.config/wt/config.toml` to disable the fallback. `sync.exclude` is an array of subtractive Git-style patterns. Hard exclusions only protect `.git`, `.claude/worktrees`, and `.conductor`. There is no separate `.worktreeignore`; use ordered `!` rules in the manifest and user config for machine-specific exclusions.
 
-Creation also writes a provenance marker (`.git/worktrees/<name>/wt.json` in the primary) recording the branch, base, and the list of synced files.
+Creation also writes a provenance marker (`.git/worktrees/<name>/wt.json` in the primary) recording the branch, base, source, manifest hash, and copied paths/counts/bytes.
 
 If file sync fails, `wt` exits nonzero and prints the captured error output.
 
