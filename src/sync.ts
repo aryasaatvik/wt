@@ -1,16 +1,22 @@
 import {
   existsSync,
-  copyFileSync,
+  closeSync,
   constants,
+  fchmodSync,
+  fstatSync,
+  futimesSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
+  readSync,
+  writeSync,
   writeFileSync,
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
@@ -172,6 +178,36 @@ function ensureSafeParent(root: string, rel: string): string {
   return join(parent, basename(rel));
 }
 
+export function copyFileNoFollow(source: string, destination: string): void {
+  let sourceFd: number | null = null;
+  let destinationFd: number | null = null;
+  let destinationCreated = false;
+  try {
+    sourceFd = openSync(source, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = fstatSync(sourceFd);
+    if (!stat.isFile()) throw new Error(`sync source is not a regular file: ${source}`);
+    destinationFd = openSync(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, stat.mode);
+    destinationCreated = true;
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let offset = 0;
+    while (true) {
+      const read = readSync(sourceFd, buffer, 0, buffer.length, offset);
+      if (read === 0) break;
+      let written = 0;
+      while (written < read) written += writeSync(destinationFd, buffer, written, read - written);
+      offset += read;
+    }
+    fchmodSync(destinationFd, stat.mode);
+    futimesSync(destinationFd, stat.atime, stat.mtime);
+  } catch (e) {
+    if (destinationCreated && lstatExists(destination)) rmSync(destination);
+    throw e;
+  } finally {
+    if (destinationFd !== null) closeSync(destinationFd);
+    if (sourceFd !== null) closeSync(sourceFd);
+  }
+}
+
 function identical(source: string, target: string): boolean {
   const sourceStat = lstatSync(source);
   const targetStat = lstatSync(target);
@@ -269,13 +305,13 @@ function copyOne(repoRoot: string, wtDir: string, rel: string, verbose: boolean,
     if (force) {
       const temp = join(dirname(dest), `.wt-sync-${randomUUID()}`);
       try {
-        copyFileSync(join(repoRoot, rel), temp, constants.COPYFILE_EXCL);
+        copyFileNoFollow(join(repoRoot, rel), temp);
         renameSync(temp, dest);
       } finally {
         if (lstatExists(temp)) rmSync(temp);
       }
     } else {
-      copyFileSync(join(repoRoot, rel), dest, constants.COPYFILE_EXCL);
+      copyFileNoFollow(join(repoRoot, rel), dest);
     }
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;

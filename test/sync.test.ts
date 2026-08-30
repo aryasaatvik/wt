@@ -3,7 +3,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { slugFor } from "../src/create.ts";
-import { applySyncPlan, classifyCopy, isAllowed, isExcluded, isEnvFile, planSync, readSyncConfig, syncFiles } from "../src/sync.ts";
+import { applySyncPlan, classifyCopy, copyFileNoFollow, isAllowed, isExcluded, isEnvFile, planSync, readSyncConfig, syncFiles } from "../src/sync.ts";
 import { makeRepo } from "./harness.ts";
 
 describe("slugFor", () => {
@@ -173,6 +173,18 @@ describe("syncFiles", () => {
     expect(readFileSync(join(dest, "selected\nname"), "utf8")).toBe("selected\n");
     expect(existsSync(join(dest, "name"))).toBe(false);
   });
+});
+
+test("copyFileNoFollow rejects a symlink source without creating a target", () => {
+  const root = mkdtempSync(join(tmpdir(), "wt-copy-source-"));
+  try {
+    writeFileSync(join(root, "referent"), "outside\n");
+    symlinkSync("referent", join(root, "source"));
+    expect(() => copyFileNoFollow(join(root, "source"), join(root, "target"))).toThrow();
+    expect(existsSync(join(root, "target"))).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("applySyncPlan preserves a target created after planning", async () => {
