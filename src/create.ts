@@ -12,6 +12,7 @@ export interface CreateOptions {
   install: boolean;
   cwd: string;
   extraFlags: string[];
+  installRunner?: (wtDir: string) => Promise<number>;
 }
 
 export function slugFor(branch: string): string {
@@ -46,9 +47,13 @@ function worktreeGitDir(wtDir: string): string | null {
 
 export interface ProvenanceMarker {
   createdAt: string;
+  updatedAt: string;
   branch: string;
   base: string | null;
+  phase: "created" | "synced" | "installing" | "ready" | "incomplete";
   syncedFiles: string[];
+  failure?: string;
+  recoveryCommand?: string;
   sync?: {
     source: string;
     mode: "manifest" | "legacy" | "none";
@@ -57,6 +62,24 @@ export interface ProvenanceMarker {
     copiedFiles: number;
     copiedBytes: number;
   };
+}
+
+function writeProvenance(wtDir: string, marker: ProvenanceMarker): void {
+  const gitDir = worktreeGitDir(wtDir);
+  if (!gitDir) {
+    info("Skipping provenance marker (could not resolve the worktree's git dir)");
+    return;
+  }
+  try {
+    marker.updatedAt = new Date().toISOString();
+    writeFileSync(join(gitDir, "wt.json"), JSON.stringify(marker, null, 2) + "\n");
+  } catch (e) {
+    info(`Skipping provenance marker (${e instanceof Error ? e.message : e})`);
+  }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 export function readProvenance(wtDir: string): ProvenanceMarker | null {
@@ -98,6 +121,17 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
   }
   log(`Worktree created at ${dim(wtDir)}`);
 
+  const createdAt = new Date().toISOString();
+  const marker: ProvenanceMarker = {
+    createdAt,
+    updatedAt: createdAt,
+    branch,
+    base: existing ? null : base,
+    phase: "created",
+    syncedFiles: [],
+  };
+  writeProvenance(wtDir, marker);
+
   info("Syncing gitignored files");
   let synced: string[] = [];
   let syncPlan: Awaited<ReturnType<typeof planSync>> | null = null;
@@ -115,59 +149,73 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
     else log(`Synced ${bold(synced.length)} files`);
   } catch (e) {
     syncSpin.stop();
+    marker.phase = "incomplete";
+    marker.failure = e instanceof Error ? e.message : String(e);
+    marker.recoveryCommand = `cd ${shellQuote(repoRoot)} && wt sync --to ${shellQuote(wtDir)}`;
+    writeProvenance(wtDir, marker);
     err("Failed to sync gitignored files");
-    detail(e instanceof Error ? e.message : String(e));
+    detail(marker.failure);
+    detail(`Worktree kept at ${wtDir}\nRetry with: ${marker.recoveryCommand}`);
     throw new ExitError(1);
   }
 
-  const marker: ProvenanceMarker = {
-    createdAt: new Date().toISOString(),
-    branch,
-    base: existing ? null : base,
-    syncedFiles: synced,
-    sync: syncPlan
-      ? {
-          source: syncPlan.source,
-          mode: syncPlan.mode,
-          manifestHash: syncPlan.manifestHash,
-          copiedPaths: synced,
-          copiedFiles: synced.length,
-          copiedBytes: syncPlan.bytesToCopy,
-        }
-      : undefined,
-  };
-  // The marker is advisory (consumers fall back to walking the worktree), so
-  // neither an unresolvable git dir nor a failed write may fail an
-  // otherwise-complete creation — and an empty git dir must never turn the
-  // write into a stray CWD-relative wt.json.
-  const gitDir = worktreeGitDir(wtDir);
-  if (gitDir) {
-    try {
-      writeFileSync(join(gitDir, "wt.json"), JSON.stringify(marker, null, 2) + "\n");
-    } catch (e) {
-      info(`Skipping provenance marker (${e instanceof Error ? e.message : e})`);
-    }
-  } else {
-    info("Skipping provenance marker (could not resolve the worktree's git dir)");
-  }
+  marker.phase = "synced";
+  marker.syncedFiles = synced;
+  marker.sync = syncPlan
+    ? {
+        source: syncPlan.source,
+        mode: syncPlan.mode,
+        manifestHash: syncPlan.manifestHash,
+        copiedPaths: synced,
+        copiedFiles: synced.length,
+        copiedBytes: syncPlan.bytesToCopy,
+      }
+    : undefined;
+  writeProvenance(wtDir, marker);
 
   if (!opts.install) {
     info("Skipping install (--no-install)");
-  } else if (!Bun.which("ni")) {
+  } else if (!opts.installRunner && !Bun.which("ni")) {
     info("Skipping install (ni not found)");
   } else if (!hasDependencyConfig(wtDir)) {
     info("Skipping install (no lockfile or packageManager)");
   } else {
+    marker.phase = "installing";
+    writeProvenance(wtDir, marker);
     info("Installing dependencies");
     console.log("");
-    // No spinner here on purpose: ni's own output (package list, timing) is useful.
-    const ni = Bun.spawn(["ni"], { cwd: wtDir, stdout: "inherit", stderr: "inherit" });
-    const code = await ni.exited;
+    let code: number;
+    try {
+      code = opts.installRunner
+        ? await opts.installRunner(wtDir)
+        : await Bun.spawn(["ni"], { cwd: wtDir, stdout: "inherit", stderr: "inherit" }).exited;
+    } catch (e) {
+      marker.phase = "incomplete";
+      marker.failure = `dependency install failed: ${e instanceof Error ? e.message : String(e)}`;
+      marker.recoveryCommand = `cd ${shellQuote(wtDir)} && ni`;
+      writeProvenance(wtDir, marker);
+      console.log("");
+      err("Dependency install failed");
+      detail(`${marker.failure}\nWorktree kept at ${wtDir}\nRetry with: ${marker.recoveryCommand}`);
+      throw new ExitError(1);
+    }
     console.log("");
     if (code === 0) log("Dependencies installed");
-    else err("Dependency install failed (run manually in worktree)");
+    else {
+      marker.phase = "incomplete";
+      marker.failure = `dependency install exited ${code}`;
+      marker.recoveryCommand = `cd ${shellQuote(wtDir)} && ni`;
+      writeProvenance(wtDir, marker);
+      err("Dependency install failed");
+      detail(`Worktree kept at ${wtDir}\nRetry with: ${marker.recoveryCommand}`);
+      throw new ExitError(code || 1);
+    }
   }
 
+  marker.phase = "ready";
+  delete marker.failure;
+  delete marker.recoveryCommand;
+  writeProvenance(wtDir, marker);
   console.log("");
   log(`Worktree ready at ${bold(wtDir)}`);
   console.log("");

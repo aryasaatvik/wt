@@ -5,6 +5,7 @@
 // settings) from the source repo, and installs dependencies via `ni`.
 
 import { cmdNew } from "./create.ts";
+import { branchExists, defaultBase } from "./git.ts";
 import { cmdLs } from "./ls.ts";
 import { cmdRm } from "./rm.ts";
 import { bold, spinner } from "./term.ts";
@@ -15,7 +16,7 @@ const HELP = `${bold("Usage:")} wt <command> [args]
 ${bold("Commands:")}
   wt                   Interactive picker (TTY only)
   wt [new|create] <branch> [base] [flags]
-                       Create worktree from base branch (default: main)
+                       Create worktree from base branch (default: origin/HEAD)
                        Checks out the branch if it already exists
                        Extra flags are passed to git worktree add
   wt sync [flags]       Copy selected ignored files between worktrees
@@ -225,14 +226,16 @@ if (!branch || branch.startsWith("-")) {
   console.log(HELP);
   process.exit(1);
 }
-let base = "main";
+let base: string | undefined;
 let flagStart = 1;
 if (rest.length > 1 && !rest[1]!.startsWith("-")) {
   base = rest[1]!;
   flagStart = 2;
 }
 try {
-  await cmdNew(branch, base, { verbose, install, cwd, extraFlags: rest.slice(flagStart) });
+  const resolvedBase = base ?? defaultBase(cwd) ?? (branchExists(cwd, branch) ? branch : null);
+  if (!resolvedBase) throw new Error("cannot determine a default base (set origin/HEAD, create main/master/dev, or pass a base explicitly)");
+  await cmdNew(branch, resolvedBase, { verbose, install, cwd, extraFlags: rest.slice(flagStart) });
 } catch (e) {
   exitFrom(e);
 }

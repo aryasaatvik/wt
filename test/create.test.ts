@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readlinkSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { cmdNew, readProvenance } from "../src/create.ts";
-import { resolvePrimaryRepo } from "../src/git.ts";
+import { defaultBase, resolvePrimaryRepo } from "../src/git.ts";
+import { ExitError } from "../src/ui.ts";
 import { makeRepo } from "./harness.ts";
 
 const OPTS = { verbose: false, install: false, extraFlags: [] };
@@ -85,6 +86,103 @@ describe("cmdNew", () => {
       expect(marker?.sync?.copiedPaths).toEqual([".env"]);
       expect(marker?.sync?.copiedFiles).toBe(1);
       expect(marker?.sync?.copiedBytes).toBe(4);
+      expect(marker?.phase).toBe("ready");
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("keeps an incomplete worktree and fails when dependency install fails", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write("package.json", '{"packageManager":"bun@1.4.0"}\n');
+      repo.commit("package manager");
+      let installedIn = "";
+      const run = cmdNew("feat/install-fails", "main", {
+        ...OPTS,
+        cwd: repo.dir,
+        install: true,
+        installRunner: async (dir) => {
+          installedIn = dir;
+          return 23;
+        },
+      });
+      let failure: unknown;
+      try { await run; } catch (error) { failure = error; }
+      expect(failure).toBeInstanceOf(ExitError);
+      expect((failure as ExitError).code).toBe(23);
+      const wtDir = join(repo.root, "repo-worktrees", "feat-install-fails");
+      expect(installedIn).toBe(wtDir);
+      expect(existsSync(wtDir)).toBe(true);
+      expect(readProvenance(wtDir)).toEqual(expect.objectContaining({
+        phase: "incomplete",
+        failure: "dependency install exited 23",
+        recoveryCommand: `cd '${wtDir}' && ni`,
+      }));
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("records incomplete when the installer throws", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write("package.json", '{"packageManager":"bun@1.4.0"}\n');
+      repo.commit("package manager");
+      let failure: unknown;
+      try {
+        await cmdNew("feat/install-throws", "main", {
+          ...OPTS,
+          cwd: repo.dir,
+          install: true,
+          installRunner: async () => { throw new Error("spawn EACCES"); },
+        });
+      } catch (error) { failure = error; }
+      expect(failure).toBeInstanceOf(ExitError);
+      const wtDir = join(repo.root, "repo-worktrees", "feat-install-throws");
+      expect(readProvenance(wtDir)).toEqual(expect.objectContaining({
+        phase: "incomplete",
+        failure: "dependency install failed: spawn EACCES",
+        recoveryCommand: `cd '${wtDir}' && ni`,
+      }));
+    } finally {
+      repo.rm();
+    }
+  });
+});
+
+describe("defaultBase", () => {
+  test("prefers origin/HEAD", () => {
+    const repo = makeRepo();
+    try {
+      repo.git("branch", "trunk");
+      repo.addOrigin();
+      repo.git("push", "origin", "trunk");
+      repo.git("remote", "set-head", "origin", "trunk");
+      repo.git("branch", "origin/trunk", "main");
+      expect(defaultBase(repo.dir)).toBe("refs/remotes/origin/trunk");
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("ignores a stale origin/HEAD symbolic ref", () => {
+    const repo = makeRepo();
+    try {
+      repo.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/missing");
+      repo.git("branch", "origin/missing");
+      expect(defaultBase(repo.dir)).toBe("main");
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("falls back to local main/master/dev and otherwise fails", () => {
+    const repo = makeRepo();
+    try {
+      expect(defaultBase(repo.dir)).toBe("main");
+      repo.git("branch", "-m", "custom");
+      expect(defaultBase(repo.dir)).toBeNull();
     } finally {
       repo.rm();
     }

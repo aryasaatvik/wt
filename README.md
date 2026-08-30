@@ -37,7 +37,7 @@ Requires: `git`, `rsync`, [`ni`](https://github.com/antfu/ni), and [`bun`](https
 ## Usage
 
 ```bash
-wt x/my-feature           # create worktree from main
+wt x/my-feature           # create from origin/HEAD (then main/master/dev)
 wt new x/my-feature dev   # create from a specific base branch
 wt new x/my-feature --no-install
 wt sync --dry-run          # preview primary -> current worktree
@@ -97,6 +97,10 @@ cd "$(wt)"
 ```
 
 Branch slashes are converted to dashes for the directory name.
+
+When no base is passed, wt resolves `origin/HEAD`, then falls back to a local `main`, `master`, or `dev`. It fails with a recovery-oriented error when none exists instead of assuming `main`.
+
+Creation writes its current phase (`created`, `synced`, `installing`, `ready`, or `incomplete`) to `wt.json`. A failed dependency install exits nonzero and keeps the worktree for diagnosis, with the exact `cd … && ni` recovery command in both the terminal and marker. It never labels an incomplete worktree ready.
 
 ### File sync
 
