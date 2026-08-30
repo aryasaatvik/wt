@@ -25,6 +25,7 @@ Worktree task?
 ├─ See worktree status    → wt ls  (always inline; bare `wt` is a TTY picker — never use it)
 ├─ Preview ignored sync   → wt sync --dry-run --json
 ├─ Fleet-wide inventory   → wt ls --all --json
+├─ Explain disk ownership → wt du --json
 └─ Clean up landed lanes  → wt reap   (dry run; --apply to remove)
 ```
 
@@ -78,11 +79,13 @@ wt ls -v         # append reachability verdicts
 wt ls --all      # every <repo>-worktrees dir under ~/Developer, incl. stray registrations
 wt ls --fresh    # remeasure sizes, ignoring the 24h cache
 wt ls --no-size  # skip size measurement entirely
+wt du            # checkout + private Git + owned + shared
+wt du feat/x --json
 ```
 
 `wt ls` is always inline and safe for agents. The interactive picker (j/k move, x remove via the safety pipeline, o editor, enter print path, v verdicts, r rescan, q quit) is reserved for **bare `wt`** on a TTY — an agent must never invoke it, since it takes over the terminal and waits for keys. Bare `wt` without a TTY prints help.
 
-PR state comes from `gh` and degrades to `?`/`"unknown"` when gh is missing or offline. Sizes come from a 24h per-worktree cache (`~` prefix = cached; `sizeCached` in `--json`); `du` only runs on cache misses, so `--all` is fast after the first sweep.
+PR state comes from `gh` and degrades to `?`/`"unknown"` when gh is missing or offline. SIZE is lane-owned space (checkout plus private Git metadata), not the primary's whole `.git` directory. `wt du` shows checkout/private/owned/shared fields. Sizes come from a versioned 24h per-worktree cache (`~` prefix = cached; `sizeCached` in `--json`), so `--all` is fast after the first sweep.
 
 ### Reap
 

@@ -43,6 +43,7 @@ function record(over: Partial<WorktreeStatus>): WorktreeStatus {
     behind: 0,
     sizeKb: 2048,
     sizeCached: false,
+    diskUsage: { checkoutKb: 2048, privateGitKb: 0, ownedKb: 2048, sharedKb: 512 },
     lastCommitAt: "2026-07-14T12:00:00Z",
     mtimeMs: 0,
     prState: "none",

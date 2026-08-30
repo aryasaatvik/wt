@@ -99,6 +99,11 @@ esac
 });
 
 describe("scanWorktrees", () => {
+  const cache = (ownedKb: number, measuredAt = new Date().toISOString()) => JSON.stringify({
+    version: 2,
+    measuredAt,
+    usage: { checkoutKb: ownedKb, privateGitKb: 0, ownedKb, sharedKb: 1 },
+  });
   test("probes dirty, detached, ahead/behind, size, and age", async () => {
     const repo = makeRepo();
     try {
@@ -173,18 +178,25 @@ describe("scanWorktrees", () => {
       expect(existsSync(laneCache)).toBe(true);
 
       // a fresh cache entry is served as-is — seed a sentinel value to prove it
-      writeFileSync(laneCache, JSON.stringify({ sizeKb: 424242, sizedAt: new Date().toISOString() }));
+      writeFileSync(laneCache, cache(424242));
       const second = await scanWorktrees(repo.dir);
       const cached = second.find((r) => r.slug === "lane")!;
       expect(cached.sizeKb).toBe(424242);
       expect(cached.sizeCached).toBe(true);
+
+      // One corrupt cache does not invalidate a different lane's valid cache.
+      writeFileSync(primaryCache, "not json{");
+      const mixed = await scanWorktrees(repo.dir);
+      const stillCached = mixed.find((r) => r.slug === "lane")!;
+      expect(stillCached.sizeKb).toBe(424242);
+      expect(stillCached.sizeCached).toBe(true);
 
       // --fresh ignores a valid cache and rewrites it
       const forced = await scanWorktrees(repo.dir, { sizeMode: "fresh" });
       const remeasured = forced.find((r) => r.slug === "lane")!;
       expect(remeasured.sizeCached).toBe(false);
       expect(remeasured.sizeKb).not.toBe(424242);
-      expect(JSON.parse(readFileSync(laneCache, "utf8")).sizeKb).not.toBe(424242);
+      expect(JSON.parse(readFileSync(laneCache, "utf8")).usage.ownedKb).not.toBe(424242);
     } finally {
       repo.rm();
     }
@@ -198,7 +210,7 @@ describe("scanWorktrees", () => {
 
       // entry older than the 24h TTL — remeasure and refresh the file
       const stale = new Date(Date.now() - 25 * 3600_000).toISOString();
-      writeFileSync(laneCache, JSON.stringify({ sizeKb: 424242, sizedAt: stale }));
+      writeFileSync(laneCache, cache(424242, stale));
       const afterStale = (await scanWorktrees(repo.dir)).find((r) => r.slug === "lane")!;
       expect(afterStale.sizeCached).toBe(false);
       expect(afterStale.sizeKb).not.toBe(424242);
@@ -206,7 +218,7 @@ describe("scanWorktrees", () => {
       // future-dated entry (clock jumped backward) counts as stale, not
       // perpetually fresh
       const future = new Date(Date.now() + 3600_000).toISOString();
-      writeFileSync(laneCache, JSON.stringify({ sizeKb: 424242, sizedAt: future }));
+      writeFileSync(laneCache, cache(424242, future));
       const afterFuture = (await scanWorktrees(repo.dir)).find((r) => r.slug === "lane")!;
       expect(afterFuture.sizeCached).toBe(false);
       expect(afterFuture.sizeKb).not.toBe(424242);
@@ -218,11 +230,11 @@ describe("scanWorktrees", () => {
       expect(afterCorrupt.sizeKb).toBeGreaterThan(0);
 
       // skip mode: no size, and the (now valid) cache file is left untouched
-      writeFileSync(laneCache, JSON.stringify({ sizeKb: 424242, sizedAt: new Date().toISOString() }));
+      writeFileSync(laneCache, cache(424242));
       const skipped = (await scanWorktrees(repo.dir, { sizeMode: "skip" })).find((r) => r.slug === "lane")!;
       expect(skipped.sizeKb).toBeNull();
       expect(skipped.sizeCached).toBe(false);
-      expect(JSON.parse(readFileSync(laneCache, "utf8")).sizeKb).toBe(424242);
+      expect(JSON.parse(readFileSync(laneCache, "utf8")).usage.ownedKb).toBe(424242);
     } finally {
       repo.rm();
     }
