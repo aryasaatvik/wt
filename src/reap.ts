@@ -10,7 +10,7 @@ import { basename, dirname, join } from "node:path";
 import { discoverPrimaries, humanSize } from "./ls.ts";
 import { resolvePrimaryRepo } from "./git.ts";
 import { runSafetyPipeline, type SafetyResult } from "./safety.ts";
-import { scanWorktrees, type ScanOptions, type WorktreeStatus } from "./scan.ts";
+import { prForCommit, remoteRepos, scanWorktrees, type ScanOptions, type WorktreeStatus } from "./scan.ts";
 import { bold, dim, gray, green, pool, red, runAsync, yellow } from "./term.ts";
 import { err, ExitError } from "./ui.ts";
 import { classifyWorktree, isRemovable, verdictLabel, type Verdict } from "./verdict.ts";
@@ -134,9 +134,14 @@ export interface ApplyResult {
   skipped: Array<{ entry: ReapEntry; reason: string }>;
 }
 
-export async function applyReap(entries: ReapEntry[]): Promise<ApplyResult> {
+export interface ApplyOptions {
+  env?: Record<string, string | undefined>;
+}
+
+export async function applyReap(entries: ReapEntry[], opts: ApplyOptions = {}): Promise<ApplyResult> {
   const removed: ReapEntry[] = [];
   const skipped: ApplyResult["skipped"] = [];
+  const reposByRoot = new Map<string, Awaited<ReturnType<typeof remoteRepos>>>();
   for (const entry of entries) {
     if (entry.disposition !== "remove") continue;
     const { record, repoRoot } = entry;
@@ -144,6 +149,27 @@ export async function applyReap(entries: ReapEntry[]): Promise<ApplyResult> {
     const headNow = await runAsync(["git", "-C", record.path, "rev-parse", "HEAD"]);
     if (!headNow.ok || headNow.stdout.trim() !== record.head) {
       skipped.push({ entry, reason: "HEAD moved since scan" });
+      continue;
+    }
+    // PR state is external and can change without moving HEAD. Recheck by
+    // commit immediately before removal; a failed lookup becomes unknown and
+    // therefore cannot authorize the stale plan.
+    let repos = reposByRoot.get(repoRoot);
+    if (!repos) {
+      repos = await remoteRepos(repoRoot);
+      reposByRoot.set(repoRoot, repos);
+    }
+    const latestPr =
+      repos.length > 0
+        ? await prForCommit(repos, record.head, opts.env ?? process.env)
+        : { prState: "unknown" as const, prNumber: null };
+    const latestPrState = latestPr?.prState ?? "unknown";
+    if (!entry.verdict || !isRemovable(entry.verdict.kind, latestPrState)) {
+      const reason =
+        latestPrState === "open"
+          ? `PR #${latestPr?.prNumber} opened since planning`
+          : `PR state became ${latestPrState} since planning`;
+      skipped.push({ entry, reason });
       continue;
     }
     // Re-evaluate read-only first: if something changed since the plan
