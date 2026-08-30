@@ -170,7 +170,6 @@ const libcLibrary = dlopen(libcPath, {
     returns: FFIType.i32,
   },
   symlinkat: { args: [FFIType.cstring, FFIType.i32, FFIType.cstring], returns: FFIType.i32 },
-  unlinkat: { args: [FFIType.i32, FFIType.cstring, FFIType.i32], returns: FFIType.i32 },
   readlinkat: {
     args: [FFIType.i32, FFIType.cstring, FFIType.ptr, FFIType.u64],
     returns: FFIType.i64,
@@ -227,46 +226,12 @@ function openSafeParent(root: string, rel: string, create: boolean): SafeParent 
   }
 }
 
-function unlinkAt(parentFd: number, name: string): void {
-  libc.unlinkat(parentFd, cString(name), 0);
-}
-
 function readlinkAt(parentFd: number, name: string): string {
   const buffer = Buffer.allocUnsafe(64 * 1024);
   const length = Number(libc.readlinkat(parentFd, cString(name), buffer, buffer.length));
   if (length < 0 || length === buffer.length)
     throw new Error(`sync source is not a readable symlink: ${name}`);
   return buffer.subarray(0, length).toString();
-}
-
-export function copyFileNoFollow(source: string, destination: string): void {
-  let sourceFd: number | null = null;
-  let destinationFd: number | null = null;
-  let destinationCreated = false;
-  try {
-    sourceFd = openSync(source, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const stat = fstatSync(sourceFd);
-    if (!stat.isFile()) throw new Error(`sync source is not a regular file: ${source}`);
-    destinationFd = openSync(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, stat.mode);
-    destinationCreated = true;
-    const buffer = Buffer.allocUnsafe(64 * 1024);
-    let offset = 0;
-    while (true) {
-      const read = readSync(sourceFd, buffer, 0, buffer.length, offset);
-      if (read === 0) break;
-      let written = 0;
-      while (written < read) written += writeSync(destinationFd, buffer, written, read - written);
-      offset += read;
-    }
-    fchmodSync(destinationFd, stat.mode);
-    futimesSync(destinationFd, stat.atime, stat.mtime);
-  } catch (e) {
-    if (destinationCreated && lstatExists(destination)) rmSync(destination);
-    throw e;
-  } finally {
-    if (destinationFd !== null) closeSync(destinationFd);
-    if (sourceFd !== null) closeSync(sourceFd);
-  }
 }
 
 export function copyFileNoFollowAt(
@@ -277,7 +242,6 @@ export function copyFileNoFollowAt(
 ): void {
   let sourceFd: number | null = null;
   let destinationFd: number | null = null;
-  let destinationCreated = false;
   try {
     sourceFd = libc.openat(
       sourceParent,
@@ -298,7 +262,6 @@ export function copyFileNoFollowAt(
       throw Object.assign(new Error(`target changed while copying: ${destinationName}`), {
         code: "EEXIST",
       });
-    destinationCreated = true;
     const buffer = Buffer.allocUnsafe(64 * 1024);
     let offset = 0;
     while (true) {
@@ -310,10 +273,9 @@ export function copyFileNoFollowAt(
     }
     fchmodSync(destinationFd, stat.mode);
     futimesSync(destinationFd, stat.atime, stat.mtime);
-  } catch (error) {
-    if (destinationCreated) unlinkAt(destinationParent, destinationName);
-    throw error;
   } finally {
+    // Keep a partial destination on failure: unlinking by name could delete a
+    // concurrent replacement after another process moved our inode away.
     if (destinationFd !== null && destinationFd >= 0) closeSync(destinationFd);
     if (sourceFd !== null && sourceFd >= 0) closeSync(sourceFd);
   }
@@ -403,7 +365,6 @@ function copyDanglingSymlink(repoRoot: string, wtDir: string, rel: string, force
       force &&
       libc.renameat(destination.fd, cString(name), destination.fd, cString(destination.name)) < 0
     ) {
-      unlinkAt(destination.fd, name);
       throw new Error(`target changed while copying: ${rel}`);
     }
   } finally {
@@ -425,16 +386,11 @@ function copyOne(
     destination = openSafeParent(wtDir, rel, true);
     if (force) {
       const temp = `.wt-sync-${randomUUID()}`;
-      try {
-        copyFileNoFollowAt(source.fd, source.name, destination.fd, temp);
-        if (
-          libc.renameat(destination.fd, cString(temp), destination.fd, cString(destination.name)) <
-          0
-        ) {
-          throw new Error(`target changed while copying: ${rel}`);
-        }
-      } finally {
-        unlinkAt(destination.fd, temp);
+      copyFileNoFollowAt(source.fd, source.name, destination.fd, temp);
+      if (
+        libc.renameat(destination.fd, cString(temp), destination.fd, cString(destination.name)) < 0
+      ) {
+        throw new Error(`target changed while copying: ${rel}`);
       }
     } else {
       copyFileNoFollowAt(source.fd, source.name, destination.fd, destination.name);

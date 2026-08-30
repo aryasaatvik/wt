@@ -3,7 +3,7 @@ import { closeSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, op
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { slugFor } from "../src/create.ts";
-import { applySyncPlan, classifyCopy, copyFileNoFollow, copyFileNoFollowAt, isAllowed, isExcluded, isEnvFile, planSync, readSyncConfig, syncFiles } from "../src/sync.ts";
+import { applySyncPlan, classifyCopy, copyFileNoFollowAt, isAllowed, isExcluded, isEnvFile, planSync, readSyncConfig, syncFiles } from "../src/sync.ts";
 import { makeRepo } from "./harness.ts";
 
 describe("slugFor", () => {
@@ -175,15 +175,21 @@ describe("syncFiles", () => {
   });
 });
 
-test("copyFileNoFollow rejects a symlink source without creating a target", () => {
-  const root = mkdtempSync(join(tmpdir(), "wt-copy-source-"));
+test("copyFileNoFollowAt rejects a symlink source without creating a target", () => {
+  const source = mkdtempSync(join(tmpdir(), "wt-copy-source-"));
+  const target = mkdtempSync(join(tmpdir(), "wt-copy-target-"));
+  writeFileSync(join(source, "referent"), "outside\n");
+  symlinkSync("referent", join(source, "source"));
+  const sourceFd = openSync(source, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  const destinationFd = openSync(target, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try {
-    writeFileSync(join(root, "referent"), "outside\n");
-    symlinkSync("referent", join(root, "source"));
-    expect(() => copyFileNoFollow(join(root, "source"), join(root, "target"))).toThrow();
-    expect(existsSync(join(root, "target"))).toBe(false);
+    expect(() => copyFileNoFollowAt(sourceFd, "source", destinationFd, "target")).toThrow();
+    expect(existsSync(join(target, "target"))).toBe(false);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    closeSync(destinationFd);
+    closeSync(sourceFd);
+    rmSync(source, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
   }
 });
 
