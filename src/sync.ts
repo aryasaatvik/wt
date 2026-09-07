@@ -27,7 +27,7 @@ const MANIFEST = ".worktreeinclude";
 
 export function isEnvFile(rel: string): boolean {
   const name = basename(rel);
-  return !name.endsWith(".example") && ENV_BASENAME.test(name);
+  return !/\.(?:example|sample)$/.test(name) && ENV_BASENAME.test(name);
 }
 
 export const SYNC_ALLOW_DIRS = [".scratchpad", ".vscode", ".idea", ".zed", ".claude"] as const;

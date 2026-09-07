@@ -88,7 +88,7 @@ Nested initialized submodules are inspected through their Git dir and common dir
 
 - unique `.scratchpad/**/*.md` notes are salvaged into the primary's `.scratchpad/archive/<date>-worktree-salvage/<worktree>/`
 - a scratchpad note that is **newer** than the primary's copy blocks removal
-- env files (`.env`, `.env.*`, `.dev.vars` — never `*.example`) that differ from the primary block removal; drift is reported as key **names** only, values are never printed
+- env files (`.env`, `.env.*`, `.dev.vars` — never `*.example` or `*.sample`) that differ from the primary block removal; drift is reported as key **names** only, values are never printed
 - dirty or status-unreadable worktrees block removal
 
 `wt reap` distinguishes landed commits from `PUSHED_ONLY` feature work. An open or unknown PR state vetoes every automatic removal; `PUSHED_ONLY` requires a confirmed merged PR. Otherwise only `REACHABLE`, `REACHABLE_BRANCH`, `EMPTY`, and `CONTENT_LANDED` (squash-merge detection) can auto-remove.
@@ -128,7 +128,7 @@ A path is copied only when it is ignored in both the source and target worktree,
 
 Without `.worktreeinclude`, wt 2.x retains the legacy config allowlist and prints a notice:
 
-- **Env**: `.env`, `.env.*`, `.dev.vars` (never `*.example`), at any depth
+- **Env**: `.env`, `.env.*`, `.dev.vars` (never `*.example` or `*.sample`), at any depth
 - **Scratchpad**: `.scratchpad/`
 - **Editor**: `.vscode/`, `.idea/`, `.zed/`
 - **Agent**: `.claude/` except `.claude/worktrees`

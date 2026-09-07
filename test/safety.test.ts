@@ -19,6 +19,7 @@ describe("env helpers", () => {
     expect(isEnvFile("apps/api/.env.local")).toBe(true);
     expect(isEnvFile("apps/web/.dev.vars")).toBe(true);
     expect(isEnvFile(".env.example")).toBe(false);
+    expect(isEnvFile("node_modules/mimetext/.env.sample")).toBe(false);
     expect(isEnvFile("config.json")).toBe(false);
   });
 
