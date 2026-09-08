@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # wt - Git Worktree Helper
 
-Quickly spin up git worktrees with explicitly selected ignored files synced and dependencies installed.
+Quickly spin up git worktrees with a shared Scratchpad, selected ignored files synced, and dependencies installed.
 
 ## When to use
 
@@ -26,6 +26,7 @@ Worktree task?
 ├─ Done with branch       → wt rm x/my-feature
 ├─ See worktree status    → wt ls  (always inline; bare `wt` is a TTY picker — never use it)
 ├─ Preview ignored sync   → wt sync --dry-run --json
+├─ Convert local Scratchpad → wt scratchpad x/my-feature --json  (then --apply after review)
 ├─ Fleet-wide inventory   → wt ls --all --json
 ├─ Explain disk ownership → wt du --json
 └─ Clean up landed lanes  → wt reap   (dry run; --apply to remove)
@@ -55,8 +56,9 @@ Creates worktree at `../<repo>-worktrees/<slug>/` where slashes in the branch na
 Steps performed:
 
 1. `git worktree add -b <branch> <path> <base>`
-2. Sync gitignored config (env, scratchpad, editor/agent settings) via rsync
-3. Run `ni` to install dependencies when a lockfile or `packageManager` field identifies the package manager
+2. Link `.scratchpad` to the primary checkout (relative symlink; creation never replaces an existing local directory)
+3. Sync other gitignored config (env, editor/agent settings) via rsync — Scratchpad is excluded
+4. Run `ni` to install dependencies when a lockfile or `packageManager` field identifies the package manager
 
 If install fails, wt exits nonzero but keeps the worktree. Read its `wt.json` phase/failure/recovery command or run the printed `cd <worktree> && ni`; an incomplete lane is never reported ready.
 
@@ -77,10 +79,25 @@ The target resolves in order: exact branch name → worktree directory name unde
 with `wt reap` before removal.
 
 Every removal runs the same fail-closed safety pipeline. It refuses dirty or status-unreadable
-worktrees and env files that drifted from the primary (reporting key names, never values). Unique or
-older `.scratchpad/**/*.md` files are copied into the primary's dated salvage archive; a conflicting
-note newer than the primary blocks removal. `wt` evaluates the pipeline read-only first, so a
-blocked removal writes no salvage files, and it never passes `--force` to Git.
+worktrees and env files that drifted from the primary (reporting key names, never values). A shared
+`.scratchpad` link must resolve to the primary's real directory; the check validates that identity
+without walking notes or creating an archive. A local Scratchpad directory, broken or foreign link,
+or unfinished migration (`wt-scratchpad-original` / `wt-scratchpad-migration.lock`) blocks removal —
+preview and convert first with `wt scratchpad`. `wt` evaluates the pipeline read-only first, and it
+never passes `--force` to Git.
+
+### Scratchpad
+
+```bash
+wt scratchpad x/my-feature --json > /tmp/scratchpad-plan.json
+# Reconcile review entries into the primary Scratchpad, then:
+wt scratchpad x/my-feature --apply /tmp/scratchpad-plan.json --json
+```
+
+New worktrees use a relative `.scratchpad` symlink to the primary. Notes are visible immediately
+across lanes; Scratchpad is excluded from `wt sync`, including explicit manifests and `--force`.
+Existing local directories require reconciliation before conversion. Do not `wt rm` / `wt reap` a
+lane that still has a local `.scratchpad`, a broken or foreign link, or an unfinished migration.
 
 ### List
 
@@ -130,7 +147,7 @@ wt sync --from current --to feat/x  # explicit lanes
 wt sync --force                     # overwrite reported conflicts
 ```
 
-Prefer a tracked `.worktreeinclude` with Git ignore syntax. A file must be ignored by source and target, selected by the manifest, and not excluded by `~/.config/wt/config.toml`. Existing target files are never overwritten without `--force`.
+Prefer a tracked `.worktreeinclude` with Git ignore syntax. A file must be ignored by source and target, selected by the manifest, and not excluded by `~/.config/wt/config.toml`. Scratchpad is never copied, including under `--force`. Existing target files are never overwritten without `--force`.
 
 ## File Sync
 
@@ -141,7 +158,7 @@ The sync step uses `.worktreeinclude` as repository policy. Without one, wt 2.x 
 - **Editor**: `.vscode/`, `.idea/`, `.zed/`
 - **Agent**: `.claude/` except `.claude/worktrees`
 
-Set `sync.requireInclude = true` under `[sync]` in `~/.config/wt/config.toml` to disable the fallback. `sync.exclude` is an array of subtractive Git-style patterns. Hard exclusions only protect `.git`, `.claude/worktrees`, and `.conductor`. There is no separate `.worktreeignore`; use ordered `!` rules in the manifest and user config for machine-specific exclusions.
+Set `sync.requireInclude = true` under `[sync]` in `~/.config/wt/config.toml` to disable the fallback. `sync.exclude` is an array of subtractive Git-style patterns. Hard exclusions only protect `.git`, `.claude/worktrees`, and `.conductor`. Scratchpad is additionally excluded from every sync, including `--force`. There is no separate `.worktreeignore`; use ordered `!` rules in the manifest and user config for machine-specific exclusions.
 
 Creation also writes a provenance marker (`.git/worktrees/<name>/wt.json` in the primary) recording the branch, base, source, manifest hash, and copied paths/counts/bytes.
 
