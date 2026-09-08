@@ -64,9 +64,15 @@ async function checkoutKb(worktree: string, metadata: RepoMetadata[]): Promise<n
   if (!existsSync(worktree)) return 0;
   const entries = readdirSync(worktree).filter((name) => name !== ".git").map((name) => join(worktree, name));
   // Count symlink entries themselves, not the external storage they reference.
-  const links = entries.filter((path) => lstatSync(path).isSymbolicLink());
-  const total = await sumKb(entries.filter((path) => !lstatSync(path).isSymbolicLink()))
-    + links.reduce((sum, path) => sum + lstatSync(path).blocks / 2, 0);
+  const owned: string[] = [];
+  let linksKb = 0;
+  for (const path of entries) {
+    const stat = lstatSync(path, { throwIfNoEntry: false });
+    if (!stat) continue;
+    if (stat.isSymbolicLink()) linksKb += stat.blocks / 2;
+    else owned.push(path);
+  }
+  const total = await sumKb(owned) + linksKb;
   const topGit = join(worktree, ".git");
   const nestedMetadata = minimalRoots(
     metadata.flatMap((item) => [item.gitDir, item.commonDir]).filter((path) => contains(worktree, path) && !contains(topGit, path)),
