@@ -4,7 +4,7 @@ Git worktree lifecycle tool: create with gitignored-file sync and dependency ins
 
 ## What it does
 
-1. Creates a worktree in `../<repo>-worktrees/<slug>/`, syncs ignored files selected by `.worktreeinclude`, and installs dependencies via [`ni`](https://github.com/antfu/ni)
+1. Creates a worktree in `../<repo>-worktrees/<slug>/`, shares `.scratchpad` with the primary checkout, syncs other ignored files selected by `.worktreeinclude`, and installs dependencies via [`ni`](https://github.com/antfu/ni)
 2. `wt ls` shows every worktree's branch, dirty state, ahead/behind, PR state, size, and age as a table; `--json` for machines, `--all` for every repo under `~/Developer`. Bare `wt` on a TTY opens the same data as an interactive picker
 3. `wt rm` and `wt reap` remove worktrees through a safety pipeline that salvages unique scratchpad notes and refuses on env drift, never with `--force`
 
@@ -81,6 +81,12 @@ cd "$(wt)"
 Measurements are cached for 24 hours in each worktree's gitdir (`wt-size.json`) using a versioned schema. A `~` prefix in the SIZE column marks a cached value. `--fresh` remeasures on demand, `--no-size` skips measurement entirely; sizes are display-only, so removal safety never depends on them.
 
 Nested initialized submodules are inspected through their Git dir and common dir. Checkout content and lane-private linked-worktree/submodule metadata count toward `ownedKb`; common object stores are reported once as `sharedKb`. This makes recursive submodule hydration visible without pretending all of the primary repository's `.git` directory belongs to the primary checkout.
+
+### Shared Scratchpad
+
+New worktrees use a relative `.scratchpad` symlink to the primary checkout. Notes and evidence are visible immediately across lanes; assign one writer per file and record branch/SHA for unmerged work. The primary directory must be untracked and real. WT adds a machine-local Git exclude for the link without editing tracked ignore rules.
+
+Scratchpad is excluded from `wt sync`, including explicit manifests and forced sync. Existing local directories require reconciliation before conversion; creation never replaces them. Shared-link removal checks the target without walking its contents or creating an archive. Broken or foreign links block removal. Disk accounting counts linked storage in the primary checkout only.
 
 ### Removal safety
 

@@ -80,7 +80,8 @@ describe("cmdNew", () => {
       const wtDir = await cmdNew("feat/manifest", "main", { ...OPTS, cwd: repo.dir });
       const marker = readProvenance(wtDir);
       expect(existsSync(join(wtDir, ".env"))).toBe(true);
-      expect(existsSync(join(wtDir, ".scratchpad/STATE.md"))).toBe(false);
+      expect(existsSync(join(wtDir, ".scratchpad/STATE.md"))).toBe(true);
+      expect(lstatSync(join(wtDir, ".scratchpad")).isSymbolicLink()).toBe(true);
       expect(marker?.sync?.mode).toBe("manifest");
       expect(marker?.sync?.manifestHash).toHaveLength(64);
       expect(marker?.sync?.copiedPaths).toEqual([".env"]);

@@ -100,7 +100,7 @@ esac
 
 describe("scanWorktrees", () => {
   const cache = (ownedKb: number, measuredAt = new Date().toISOString()) => JSON.stringify({
-    version: 2,
+    version: 3,
     measuredAt,
     usage: { checkoutKb: ownedKb, privateGitKb: 0, ownedKb, sharedKb: 1 },
   });

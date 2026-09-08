@@ -4,6 +4,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
+import { scratchpadState } from "./scratchpad.ts";
 import { readProvenance } from "./create.ts";
 import { isEnvFile } from "./sync.ts";
 import { runAsync } from "./term.ts";
@@ -87,7 +88,7 @@ function* walkFiles(
 
 // The no-provenance env fallback walks the whole worktree; skip .git and the
 // heavy artifact dirs so the walk stays cheap.
-const WALK_SKIP = new Set([".git", "node_modules", ".next", ".turbo", "dist", ".cache", "build", ".build", "Pods", "DerivedData"]);
+const WALK_SKIP = new Set([".scratchpad", ".git", "node_modules", ".next", ".turbo", "dist", ".cache", "build", ".build", "Pods", "DerivedData"]);
 
 function readIfExists(path: string): string | null {
   try {
@@ -119,7 +120,9 @@ export async function runSafetyPipeline(
   //    a worktree-NEWER conflicting note blocks removal
   const scratchDir = join(wtPath, ".scratchpad");
   const salvageRoot = join(repoRoot, ".scratchpad", "archive", `${date}-worktree-salvage`, basename(wtPath));
-  if (existsSync(scratchDir)) {
+  const scratchpad = scratchpadState(repoRoot, wtPath);
+  if (scratchpad.kind === "invalid") flags.push({ kind: "scratchpad-conflict", detail: scratchpad.reason });
+  if (scratchpad.kind === "legacy") {
     for (const rel of walkFiles(scratchDir)) {
       if (!rel.endsWith(".md")) continue;
       const wtFile = join(scratchDir, rel);

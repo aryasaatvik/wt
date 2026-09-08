@@ -57,7 +57,7 @@ describe("isExcluded", () => {
     expect(isExcluded(".git/config")).toBe(true);
     expect(isExcluded(".env")).toBe(false);
     expect(isExcluded("node_modules/pkg/index.js")).toBe(false);
-    expect(isExcluded(".scratchpad/archive/note.md")).toBe(false);
+    expect(isExcluded(".scratchpad/archive/note.md")).toBe(true);
   });
 });
 
@@ -84,7 +84,7 @@ describe("sync planner", () => {
       expect(plan.mode).toBe("manifest");
       expect(plan.manifestHash).toHaveLength(64);
       expect(plan.actions.find((item) => item.path === ".env")?.status).toBe("conflict");
-      expect(plan.actions.find((item) => item.path === ".scratchpad/STATE.md")?.status).toBe("skip-identical");
+      expect(plan.actions.some((item) => item.path.startsWith(".scratchpad/"))).toBe(false);
       expect(plan.actions.find((item) => item.path === ".cache/large.bin")?.status).toBe("copy");
       expect(plan.actions.find((item) => item.path === ".claude/worktrees/private/state")?.status).toBe("excluded");
       expect(plan.actions.find((item) => item.path === "source-only.local")?.reason).toBe("not ignored by target");
@@ -119,7 +119,7 @@ describe("sync planner", () => {
       const excluded = await planSync(repo.dir, target, {
         config: { requireInclude: false, exclude: [".scratchpad/**"] },
       });
-      expect(excluded.actions.find((item) => item.path === ".scratchpad/STATE.md")?.reason).toBe("sync.exclude");
+      expect(excluded.actions.some((item) => item.path.startsWith(".scratchpad/"))).toBe(false);
     } finally {
       repo.rm();
     }
@@ -262,13 +262,13 @@ test("applySyncPlan rejects a symlinked destination parent", async () => {
   const repo = makeRepo();
   const outside = mkdtempSync(join(tmpdir(), "wt-sync-outside-"));
   try {
-    repo.write(".gitignore", ".scratchpad/\n");
-    repo.write(".worktreeinclude", ".scratchpad/**\n");
+    repo.write(".gitignore", ".vscode/\n");
+    repo.write(".worktreeinclude", ".vscode/**\n");
     repo.commit("policy");
     const target = repo.addWorktree("lane", { branch: "lane" });
-    repo.write(".scratchpad/STATE.md", "source\n");
+    repo.write(".vscode/STATE.md", "source\n");
     const plan = await planSync(repo.dir, target, { config: { requireInclude: false, exclude: [] } });
-    symlinkSync(outside, join(target, ".scratchpad"));
+    symlinkSync(outside, join(target, ".vscode"));
     await expect(applySyncPlan(plan)).rejects.toThrow("unsafe symlink or non-directory parent");
     expect(existsSync(join(outside, "STATE.md"))).toBe(false);
   } finally {
