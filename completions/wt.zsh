@@ -6,6 +6,7 @@ _wt() {
     'new:Create worktree from base branch'
     'create:Create worktree from base branch'
     'sync:Copy selected ignored files between worktrees'
+    'scratchpad:Preview or convert local Scratchpad to shared storage'
     'rm:Remove worktree'
     'remove:Remove worktree'
     'ls:List all worktrees'
@@ -48,6 +49,13 @@ _wt() {
             '--dry-run[Print plan without copying]' \
             '--json[Print machine-readable plan]' \
             '--force[Overwrite conflicting target files]'
+          return
+          ;;
+        scratchpad)
+          _arguments \
+            '--json[Print migration plan]' \
+            '--apply[Apply reviewed migration plan]:plan:_files' \
+            '*:worktree:_wt_worktree_targets'
           return
           ;;
         du)

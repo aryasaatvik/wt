@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { listWorktrees, resolvePrimaryRepo } from "./git.ts";
 import { runAsync } from "./term.ts";
@@ -25,7 +25,7 @@ interface RepoMetadata {
   commonDir: string;
 }
 
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 const CACHE_FILE = "wt-size.json";
 const CACHE_TTL_MS = 24 * 3600_000;
 
@@ -63,7 +63,16 @@ async function sumKb(paths: string[]): Promise<number> {
 async function checkoutKb(worktree: string, metadata: RepoMetadata[]): Promise<number> {
   if (!existsSync(worktree)) return 0;
   const entries = readdirSync(worktree).filter((name) => name !== ".git").map((name) => join(worktree, name));
-  const total = await sumKb(entries);
+  // Count symlink entries themselves, not the external storage they reference.
+  const owned: string[] = [];
+  let linksKb = 0;
+  for (const path of entries) {
+    const stat = lstatSync(path, { throwIfNoEntry: false });
+    if (!stat) continue;
+    if (stat.isSymbolicLink()) linksKb += stat.blocks / 2;
+    else owned.push(path);
+  }
+  const total = await sumKb(owned) + linksKb;
   const topGit = join(worktree, ".git");
   const nestedMetadata = minimalRoots(
     metadata.flatMap((item) => [item.gitDir, item.commonDir]).filter((path) => contains(worktree, path) && !contains(topGit, path)),

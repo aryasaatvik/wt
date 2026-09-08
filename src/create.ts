@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { branchExists, resolvePrimaryRepo } from "./git.ts";
 import { applySyncPlan, planSync } from "./sync.ts";
+import { ensureSharedScratchpad } from "./scratchpad.ts";
 import { bold, dim, run, runAsync, spinner } from "./term.ts";
 import { detail, err, ExitError, info, log } from "./ui.ts";
 
@@ -137,6 +138,7 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
   let syncPlan: Awaited<ReturnType<typeof planSync>> | null = null;
   const syncSpin = spinner("Syncing files");
   try {
+    await ensureSharedScratchpad(repoRoot, wtDir);
     syncPlan = await planSync(repoRoot, wtDir);
     if (syncPlan.mode === "legacy") info("No .worktreeinclude found; using v2 legacy sync defaults");
     const copyCount = syncPlan.summary.copy;

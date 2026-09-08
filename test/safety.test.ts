@@ -40,16 +40,17 @@ describe("env helpers", () => {
 });
 
 describe("runSafetyPipeline", () => {
-  test("salvages unique scratchpad mds into a dated archive", async () => {
+  test("retains local Scratchpad copies for explicit reconciliation", async () => {
     const repo = makeRepo();
     try {
       const wt = repo.addWorktree("lane", { branch: "lane" });
       writeIn(repo, wt, ".scratchpad/research/unique.md", "only in lane\n");
       const result = await runSafetyPipeline(wt, repo.dir, { date: "2026-07-15" });
-      expect(result.ok).toBe(true);
-      expect(result.salvaged).toEqual([".scratchpad/research/unique.md"]);
+      expect(result.ok).toBe(false);
+      expect(result.salvaged).toEqual([]);
       const dest = join(repo.dir, ".scratchpad/archive/2026-07-15-worktree-salvage/lane/research/unique.md");
-      expect(readFileSync(dest, "utf8")).toBe("only in lane\n");
+      expect(existsSync(dest)).toBe(false);
+      expect(readFileSync(join(wt, ".scratchpad/research/unique.md"), "utf8")).toBe("only in lane\n");
     } finally {
       repo.rm();
     }
@@ -87,13 +88,14 @@ describe("runSafetyPipeline", () => {
     }
   });
 
-  test("dry run reports salvage candidates without copying", async () => {
+  test("dry run reports a local-copy blocker without copying", async () => {
     const repo = makeRepo();
     try {
       const wt = repo.addWorktree("lane", { branch: "lane" });
       writeIn(repo, wt, ".scratchpad/unique.md", "x\n");
       const result = await runSafetyPipeline(wt, repo.dir, { dryRun: true, date: "2026-07-15" });
-      expect(result.salvaged).toEqual([".scratchpad/unique.md"]);
+      expect(result.salvaged).toEqual([]);
+      expect(result.ok).toBe(false);
       expect(existsSync(join(repo.dir, ".scratchpad/archive"))).toBe(false);
     } finally {
       repo.rm();

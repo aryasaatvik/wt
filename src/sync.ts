@@ -52,7 +52,7 @@ function matchesPathPrefix(rel: string, excluded: string): boolean {
 }
 
 export function isExcluded(rel: string): boolean {
-  return SYNC_EXCLUDE.some((entry) => matchesPathPrefix(rel, entry));
+  return rel === ".scratchpad" || rel.startsWith(".scratchpad/") || SYNC_EXCLUDE.some((entry) => matchesPathPrefix(rel, entry));
 }
 
 export interface SyncConfig {
@@ -109,7 +109,7 @@ function emptySummary(): Record<SyncStatus, number> {
 async function gitIgnored(repo: string, pathspecs: readonly string[] = []): Promise<string[]> {
   const result = await runAsync([
     "git", "-C", repo, "ls-files", "--others", "--ignored", "--exclude-standard", "-z",
-    ...(pathspecs.length ? ["--", ...pathspecs] : []),
+    "--", ...pathspecs, ":(top,exclude).scratchpad",
   ]);
   if (!result.ok) throw new Error(`git ls-files failed in ${repo}:\n${result.stderr}`);
   return result.stdout.split("\0").filter(Boolean);
@@ -117,7 +117,7 @@ async function gitIgnored(repo: string, pathspecs: readonly string[] = []): Prom
 
 async function selectedByManifest(repo: string, manifestPath: string): Promise<string[]> {
   const result = await runAsync([
-    "git", "-C", repo, "ls-files", "--others", "--ignored", `--exclude-from=${manifestPath}`, "-z",
+    "git", "-C", repo, "ls-files", "--others", "--ignored", `--exclude-from=${manifestPath}`, "-z", "--", ":(top,exclude).scratchpad",
   ]);
   if (!result.ok) throw new Error(`failed to evaluate ${manifestPath}:\n${result.stderr}`);
   return result.stdout.split("\0").filter(Boolean);
@@ -458,6 +458,9 @@ export async function syncFiles(repoRoot: string, wtDir: string, files: string[]
 
 export async function applySyncPlan(plan: SyncPlan, verbose = false): Promise<string[]> {
   const files = plan.actions.filter((action) => action.status === "copy").map((action) => action.path);
+  if (files.some((path) => path === ".scratchpad" || path.startsWith(".scratchpad/"))) {
+    throw new Error("Scratchpad is shared state and cannot be copied by sync; regenerate this plan");
+  }
   const landed = await syncFiles(plan.source, plan.target, files, verbose, plan.force);
   if (landed.length !== files.length) {
     throw new Error(`sync source changed while copying: ${files.filter((path) => !landed.includes(path)).join(", ")}`);

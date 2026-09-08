@@ -136,7 +136,7 @@ describe("wt reap", () => {
     }
   }, 30000);
 
-  test("salvages unique scratchpad notes during apply", async () => {
+  test("retains local Scratchpad copies without recursive salvage", async () => {
     const repo = makeRepo();
     try {
       repo.addOrigin();
@@ -146,15 +146,15 @@ describe("wt reap", () => {
 
       const pr = conclusiveNoPrScan(repo);
       const entries = await planReap({ all: false, cwd: repo.dir, scan: pr });
-      expect(dispositionOf(entries, "lane-notes").disposition).toBe("remove");
+      expect(dispositionOf(entries, "lane-notes").disposition).toBe("skip");
 
       const applied = await applyReap(entries, { env: pr.env });
-      expect(applied.removed.length).toBe(1);
-      expect(existsSync(lane)).toBe(false);
+      expect(applied.removed.length).toBe(0);
+      expect(existsSync(lane)).toBe(true);
       const archive = join(repo.dir, ".scratchpad", "archive");
-      expect(existsSync(archive)).toBe(true);
+      expect(existsSync(archive)).toBe(false);
       const report = renderReapReport(entries, true, applied);
-      expect(report).toContain("salvage: .scratchpad/notes/finding.md");
+      expect(report).toContain("reconciliation");
     } finally {
       repo.rm();
     }

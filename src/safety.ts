@@ -1,9 +1,8 @@
-// Removal safety pipeline, adopted from the 2026-07-15 cleanup that removed
-// 100 worktrees without losing data: salvage unique scratchpad notes, refuse
-// on env drift (reporting key NAMES only, never values), refuse dirty trees.
+// Read-only removal checks: shared Scratchpad identity, environment drift, and Git cleanliness.
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, dirname, join, relative } from "node:path";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
+import { scratchpadState, statIfPresent } from "./scratchpad.ts";
 import { readProvenance } from "./create.ts";
 import { isEnvFile } from "./sync.ts";
 import { runAsync } from "./term.ts";
@@ -17,14 +16,14 @@ export interface SafetyResult {
   /** true when removal may proceed */
   ok: boolean;
   flags: SafetyFlag[];
-  /** repo-relative scratchpad files copied into the primary's salvage archive */
+  /** Retained in removal reports for existing consumers; shared storage never needs salvage. */
   salvaged: string[];
 }
 
 export interface SafetyOptions {
-  /** evaluate only — report what WOULD be salvaged without copying */
+  /** Compatibility with existing callers; checks are always read-only. */
   dryRun?: boolean;
-  /** date stamp for the salvage archive dir (tests pin it) */
+  /** Legacy archive date, no longer used. */
   date?: string;
 }
 
@@ -73,7 +72,7 @@ function* walkFiles(
     const full = join(dir, name);
     let stat;
     try {
-      stat = statSync(full);
+      stat = lstatSync(full);
     } catch {
       continue;
     }
@@ -87,7 +86,7 @@ function* walkFiles(
 
 // The no-provenance env fallback walks the whole worktree; skip .git and the
 // heavy artifact dirs so the walk stays cheap.
-const WALK_SKIP = new Set([".git", "node_modules", ".next", ".turbo", "dist", ".cache", "build", ".build", "Pods", "DerivedData"]);
+const WALK_SKIP = new Set([".scratchpad", ".git", "node_modules", ".next", ".turbo", "dist", ".cache", "build", ".build", "Pods", "DerivedData"]);
 
 function readIfExists(path: string): string | null {
   try {
@@ -104,7 +103,7 @@ export async function runSafetyPipeline(
 ): Promise<SafetyResult> {
   const flags: SafetyFlag[] = [];
   const salvaged: string[] = [];
-  const date = opts.date ?? new Date().toISOString().slice(0, 10);
+
 
   // 1. dirty — fail closed if status is unreadable
   const status = await runAsync(["git", "-C", wtPath, "status", "--porcelain"]);
@@ -115,46 +114,22 @@ export async function runSafetyPipeline(
     flags.push({ kind: "dirty", detail: `${n} uncommitted change${n === 1 ? "" : "s"}` });
   }
 
-  // 2. scratchpad salvage — unique or worktree-older notes are archived;
-  //    a worktree-NEWER conflicting note blocks removal
-  const scratchDir = join(wtPath, ".scratchpad");
-  const salvageRoot = join(repoRoot, ".scratchpad", "archive", `${date}-worktree-salvage`, basename(wtPath));
-  if (existsSync(scratchDir)) {
-    for (const rel of walkFiles(scratchDir)) {
-      if (!rel.endsWith(".md")) continue;
-      const wtFile = join(scratchDir, rel);
-      const priFile = join(repoRoot, ".scratchpad", rel);
-      const wtContent = readIfExists(wtFile);
-      if (wtContent === null) continue;
-      const priContent = readIfExists(priFile);
-      if (priContent === wtContent) continue;
-      if (priContent !== null) {
-        let wtNewer: boolean;
-        try {
-          wtNewer = statSync(wtFile).mtimeMs > statSync(priFile).mtimeMs;
-        } catch {
-          // a file vanished between read and stat — flag it, never crash the run
-          flags.push({ kind: "scratchpad-conflict", detail: `.scratchpad/${rel} changed while checking — retry` });
-          continue;
-        }
-        if (wtNewer) {
-          flags.push({ kind: "scratchpad-conflict", detail: `.scratchpad/${rel} is newer than primary's copy` });
-          continue;
-        }
-      }
-      if (!opts.dryRun) {
-        const dest = join(salvageRoot, rel);
-        mkdirSync(dirname(dest), { recursive: true });
-        copyFileSync(wtFile, dest);
-      }
-      salvaged.push(`.scratchpad/${rel}`);
-    }
+  // Shared storage is checked by identity, never by scanning canonical contents.
+  const scratchpad = scratchpadState(repoRoot, wtPath);
+  if (scratchpad.kind === "invalid") flags.push({ kind: "scratchpad-conflict", detail: scratchpad.reason });
+  if (scratchpad.kind === "legacy") {
+    flags.push({ kind: "scratchpad-conflict", detail: "local .scratchpad requires reconciliation; preview with wt scratchpad <target> --json" });
+  }
+  const metadata = await runAsync(["git", "-C", wtPath, "rev-parse", "--absolute-git-dir"]);
+  if (!metadata.ok) flags.push({ kind: "status-unreadable", detail: "cannot inspect Scratchpad migration recovery" });
+  else if (statIfPresent(join(metadata.stdout.trim(), "wt-scratchpad-original")) || statIfPresent(join(metadata.stdout.trim(), "wt-scratchpad-migration.lock"))) {
+    flags.push({ kind: "scratchpad-conflict", detail: "Scratchpad migration is incomplete; retain this worktree and resume conversion" });
   }
 
   // 3. env drift — prefer the provenance marker's synced list, fall back to a walk
   const marker = readProvenance(wtPath);
   const candidates = marker
-    ? marker.syncedFiles.filter(isEnvFile)
+    ? marker.syncedFiles.filter((path) => isEnvFile(path) && path !== ".scratchpad" && !path.startsWith(".scratchpad/"))
     : [...walkFiles(wtPath, wtPath, (name) => WALK_SKIP.has(name))].filter(isEnvFile);
   for (const rel of new Set(candidates)) {
     const wtContent = readIfExists(join(wtPath, rel));
