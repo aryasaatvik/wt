@@ -1,7 +1,7 @@
 // wt — git worktree helper.
 //
 // Creates worktrees as siblings of the repo (`../<repo>-worktrees/<slug>/`,
-// branch slashes → dashes), syncs gitignored config (env, .scratchpad, editor
+// branch slashes → dashes), shares Scratchpad, syncs gitignored config (env, editor
 // settings) from the source repo, and installs dependencies via `ni`.
 
 import { cmdNew } from "./create.ts";
@@ -24,6 +24,8 @@ ${bold("Commands:")}
                        --to <branch|path>             target (default: current)
                        --dry-run  plan only · --json  machine-readable plan
                        --force    overwrite conflicting target files
+  wt scratchpad <target> [--json | --apply <plan.json>]
+                       Preview or convert a reconciled local Scratchpad to shared storage
   wt rm|remove <target> [flags]
                        Remove worktree (keeps branch by default)
                        <target> is a branch name, worktree dir name, or path —
@@ -162,6 +164,34 @@ if (command === "reap") {
     spin.stop();
     exitFrom(e);
   }
+}
+
+if (command === "scratchpad") {
+  const target = args[1];
+  let apply: string | undefined;
+  let json = false;
+  for (let i = 2; i < args.length; i++) {
+    if (args[i] === "--json") json = true;
+    else if (args[i] === "--apply" && args[i + 1] && !args[i + 1]!.startsWith("--")) apply = args[++i];
+    else { err(`unknown or incomplete scratchpad option: ${args[i]}`); process.exit(1); }
+  }
+  if (!target || target.startsWith("--")) { err("wt scratchpad expects a worktree target"); process.exit(1); }
+  try {
+    const { planScratchpadMigration, applyScratchpadMigration } = await import("./scratchpad-migration.ts");
+    if (apply) {
+      const plan = await Bun.file(apply).json();
+      const result = await applyScratchpadMigration(cwd, target, plan);
+      console.log(json ? JSON.stringify(result) : `Shared Scratchpad: ${result.worktree}`);
+    } else {
+      const plan = await planScratchpadMigration(cwd, target);
+      console.log(json ? JSON.stringify(plan, null, 2) : [
+        `${plan.worktree}: ${plan.state}`,
+        ...plan.entries.filter((entry) => entry.status === "review").map((entry) => `review ${entry.kind} ${entry.path}`),
+        "Use --json to save a plan. Reconcile review entries into canonical storage before --apply <plan.json>.",
+      ].join("\n"));
+    }
+  } catch (error) { exitFrom(error); }
+  process.exit(0);
 }
 
 if (command === "sync") {

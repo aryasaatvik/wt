@@ -6,7 +6,7 @@ Git worktree lifecycle tool: create with gitignored-file sync and dependency ins
 
 1. Creates a worktree in `../<repo>-worktrees/<slug>/`, shares `.scratchpad` with the primary checkout, syncs other ignored files selected by `.worktreeinclude`, and installs dependencies via [`ni`](https://github.com/antfu/ni)
 2. `wt ls` shows every worktree's branch, dirty state, ahead/behind, PR state, size, and age as a table; `--json` for machines, `--all` for every repo under `~/Developer`. Bare `wt` on a TTY opens the same data as an interactive picker
-3. `wt rm` and `wt reap` remove worktrees through a safety pipeline that salvages unique scratchpad notes and refuses on env drift, never with `--force`
+3. `wt rm` and `wt reap` remove worktrees through a safety pipeline that validates shared Scratchpad and refuses on env drift, never with `--force`
 
 ## Install
 
@@ -88,12 +88,41 @@ New worktrees use a relative `.scratchpad` symlink to the primary checkout. Note
 
 Scratchpad is excluded from `wt sync`, including explicit manifests and forced sync. Existing local directories require reconciliation before conversion; creation never replaces them. Shared-link removal checks the target without walking its contents or creating an archive. Broken or foreign links block removal. Disk accounting counts linked storage in the primary checkout only.
 
+### Convert existing Scratchpads
+
+Pause the target lane's writers before conversion. Start with a read-only preview saved outside the directory being converted:
+
+```sh
+wt scratchpad feature-branch --json > /tmp/scratchpad-plan.json
+# Reconcile review entries into the primary Scratchpad, then either regenerate
+# the plan (identical files need no decision) or add explicit resolutions.
+wt scratchpad feature-branch --apply /tmp/scratchpad-plan.json --json
+```
+
+The preview fingerprints all files, directories, modes, and symlink text without following links. For each `review` entry, integrate its useful facts into the canonical document or preserve a needed artifact there. A resolution records the original entry hash, the disposition, the reason, and a canonical evidence file's SHA-256:
+
+```json
+{
+  "path": "research/old-note.md",
+  "sourceHash": "<entry hash from preview>",
+  "disposition": "integrated",
+  "reason": "The unresolved finding now lives in the owning issue.",
+  "evidence": { "path": "backlog/issues/example.md", "hash": "<canonical file SHA-256>" }
+}
+```
+
+Append decisions to the plan's `resolutions` array. Dispositions are `integrated`, `superseded`, or `preserved`. Preserved artifacts must match bytes and mode; symlinks require an explicit semantic decision because a relative target can change meaning after conversion. Directories are structural and do not require decisions. WT validates fingerprints, not the truth of prose: the reviewing agent owns semantic reconciliation. It never copies differing files into an archive automatically.
+
+Apply rechecks Git identity, the entire source inventory, and canonical witnesses. It retains the original temporarily at `wt-scratchpad-original` in the worktree's private Git directory, establishes the link, rechecks, then disposes of the reviewed original. Failures retain recovery content and block `rm`/`reap`. Preview again and resume with a reviewed plan. A process crash can leave `wt-scratchpad-migration.lock` in that same directory; verify the migration process has stopped before removing that stale lock. Do not move or discard recovery content to bypass the checks. Conversion cannot prevent writes through already-open file descriptors, so writers must remain paused until it finishes.
+
+Task evidence should use canonical paths and identify its source branch/SHA. Relative links into worktree code or runtime directories must be repaired during reconciliation. Retention and organization are separate from worktree removal; distinct bytes alone do not make an artifact worth keeping forever.
+
 ### Removal safety
 
 `wt rm` and `wt reap` never pass `--force` to git. Before any removal:
 
-- unique `.scratchpad/**/*.md` notes are salvaged into the primary's `.scratchpad/archive/<date>-worktree-salvage/<worktree>/`
-- a scratchpad note that is **newer** than the primary's copy blocks removal
+- a shared `.scratchpad` link must resolve to the primary's real directory; the check does not traverse shared content
+- an existing local Scratchpad, unexpected link, or unfinished migration blocks removal; use `wt scratchpad` to reconcile and convert it
 - env files (`.env`, `.env.*`, `.dev.vars` — never `*.example` or `*.sample`) that differ from the primary block removal; drift is reported as key **names** only, values are never printed
 - dirty or status-unreadable worktrees block removal
 

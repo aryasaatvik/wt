@@ -2,6 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { listWorktrees, resolvePrimaryRepo } from "./git.ts";
 import { applySyncPlan, planSync, type SyncPlan } from "./sync.ts";
+import { ensureSharedScratchpad, scratchpadState } from "./scratchpad.ts";
 import { run } from "./term.ts";
 
 export interface SyncCommandOptions {
@@ -48,6 +49,10 @@ export async function cmdSync(options: SyncCommandOptions): Promise<{ plan: Sync
   const plan = await planSync(source, target, { force: options.force });
   if (!options.dryRun && plan.summary.conflict > 0) {
     throw new Error(`${plan.summary.conflict} target conflict(s); inspect with --dry-run and retry with --force only if replacement is intended`);
+  }
+  if (!options.dryRun) {
+    const primary = resolvePrimaryRepo(target);
+    if (target !== primary && scratchpadState(primary, target).kind !== "legacy") await ensureSharedScratchpad(primary, target);
   }
   const copied = options.dryRun ? [] : await applySyncPlan(plan, options.verbose);
   return { plan, copied };
