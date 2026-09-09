@@ -26,7 +26,7 @@ Worktree task?
 ├─ Done with branch       → wt rm x/my-feature
 ├─ See worktree status    → wt ls  (always inline; bare `wt` is a TTY picker — never use it)
 ├─ Preview ignored sync   → wt sync --dry-run --json
-├─ Convert local Scratchpad → wt scratchpad x/my-feature --json  (then --apply after review)
+├─ Convert local Scratchpad → wt scratchpad x/my-feature --json  (regenerate or resolve, then --apply)
 ├─ Fleet-wide inventory   → wt ls --all --json
 ├─ Explain disk ownership → wt du --json
 └─ Clean up landed lanes  → wt reap   (dry run; --apply to remove)
@@ -90,9 +90,14 @@ never passes `--force` to Git.
 
 ```bash
 wt scratchpad x/my-feature --json > /tmp/scratchpad-plan.json
-# Reconcile review entries into the primary Scratchpad, then:
+# Reconcile review entries into the primary Scratchpad, then either regenerate
+# the plan (identical files need no decision) or append explicit resolutions.
 wt scratchpad x/my-feature --apply /tmp/scratchpad-plan.json --json
 ```
+
+`--apply` rejects leftover `review` entries (`unreconciled Scratchpad entry`). Unique, modified, or
+symlink entries need a resolution (`integrated` / `superseded` / `preserved`) on the saved plan;
+identical files do not.
 
 New worktrees use a relative `.scratchpad` symlink to the primary. Notes are visible immediately
 across lanes; Scratchpad is excluded from `wt sync`, including explicit manifests and `--force`.
@@ -154,11 +159,10 @@ Prefer a tracked `.worktreeinclude` with Git ignore syntax. A file must be ignor
 The sync step uses `.worktreeinclude` as repository policy. Without one, wt 2.x warns and retains this legacy allowlist:
 
 - **Env**: `.env`, `.env.*`, `.dev.vars` (never `*.example`)
-- **Scratchpad**: `.scratchpad/`
 - **Editor**: `.vscode/`, `.idea/`, `.zed/`
 - **Agent**: `.claude/` except `.claude/worktrees`
 
-Set `sync.requireInclude = true` under `[sync]` in `~/.config/wt/config.toml` to disable the fallback. `sync.exclude` is an array of subtractive Git-style patterns. Hard exclusions only protect `.git`, `.claude/worktrees`, and `.conductor`. Scratchpad is additionally excluded from every sync, including `--force`. There is no separate `.worktreeignore`; use ordered `!` rules in the manifest and user config for machine-specific exclusions.
+Set `sync.requireInclude = true` under `[sync]` in `~/.config/wt/config.toml` to disable the fallback. `sync.exclude` is an array of subtractive Git-style patterns. Hard exclusions only protect `.git`, `.claude/worktrees`, and `.conductor`. Scratchpad is always filtered out of sync, including fallback and `--force`. There is no separate `.worktreeignore`; use ordered `!` rules in the manifest and user config for machine-specific exclusions.
 
 Creation also writes a provenance marker (`.git/worktrees/<name>/wt.json` in the primary) recording the branch, base, source, manifest hash, and copied paths/counts/bytes.
 
