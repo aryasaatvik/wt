@@ -135,7 +135,7 @@ async function ignoredByTarget(target: string, candidates: string[]): Promise<Se
   return new Set(stdout.split("\0").filter(Boolean));
 }
 
-async function matchIgnorePatterns(paths: string[], patterns: string[]): Promise<Set<string>> {
+export async function matchIgnorePatterns(paths: string[], patterns: string[]): Promise<Set<string>> {
   if (paths.length === 0 || patterns.length === 0) return new Set();
   const dir = mkdtempSync(join(tmpdir(), "wt-ignore-"));
   try {

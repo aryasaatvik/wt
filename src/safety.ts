@@ -4,7 +4,7 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { scratchpadState, statIfPresent } from "./scratchpad.ts";
 import { readProvenance } from "./create.ts";
-import { isEnvFile } from "./sync.ts";
+import { isEnvFile, isExcluded, matchIgnorePatterns, readSyncConfig } from "./sync.ts";
 import { runAsync } from "./term.ts";
 
 export interface SafetyFlag {
@@ -25,6 +25,8 @@ export interface SafetyOptions {
   dryRun?: boolean;
   /** Legacy archive date, no longer used. */
   date?: string;
+  /** Environment used to resolve the user's sync config; defaults to process.env. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /** Key NAMES of KEY=... lines. Values never leave this function. */
@@ -128,9 +130,15 @@ export async function runSafetyPipeline(
 
   // 3. env drift — prefer the provenance marker's synced list, fall back to a walk
   const marker = readProvenance(wtPath);
-  const candidates = marker
+  let candidates = marker
     ? marker.syncedFiles.filter((path) => isEnvFile(path) && path !== ".scratchpad" && !path.startsWith(".scratchpad/"))
     : [...walkFiles(wtPath, wtPath, (name) => WALK_SKIP.has(name))].filter(isEnvFile);
+  candidates = candidates.filter((path) => !isExcluded(path));
+  const userExcludes = readSyncConfig(opts.env).exclude;
+  if (userExcludes.length > 0) {
+    const userExcluded = await matchIgnorePatterns(candidates, userExcludes);
+    candidates = candidates.filter((path) => !userExcluded.has(path));
+  }
   for (const rel of new Set(candidates)) {
     const wtContent = readIfExists(join(wtPath, rel));
     if (wtContent === null) continue;
