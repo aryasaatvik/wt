@@ -25,6 +25,8 @@ export interface SafetyOptions {
   dryRun?: boolean;
   /** Legacy archive date, no longer used. */
   date?: string;
+  /** Environment used to resolve the user's sync config; defaults to process.env. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /** Key NAMES of KEY=... lines. Values never leave this function. */
@@ -132,7 +134,7 @@ export async function runSafetyPipeline(
     ? marker.syncedFiles.filter((path) => isEnvFile(path) && path !== ".scratchpad" && !path.startsWith(".scratchpad/"))
     : [...walkFiles(wtPath, wtPath, (name) => WALK_SKIP.has(name))].filter(isEnvFile);
   candidates = candidates.filter((path) => !isExcluded(path));
-  const userExcludes = readSyncConfig().exclude;
+  const userExcludes = readSyncConfig(opts.env).exclude;
   if (userExcludes.length > 0) {
     const userExcluded = await matchIgnorePatterns(candidates, userExcludes);
     candidates = candidates.filter((path) => !userExcluded.has(path));

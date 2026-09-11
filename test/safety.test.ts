@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { cmdRm } from "../src/rm.ts";
 import { describeEnvDrift, envKeys, runSafetyPipeline } from "../src/safety.ts";
@@ -127,6 +128,90 @@ describe("runSafetyPipeline", () => {
         cmdRm("lane", { deleteBranch: false, cwd: repo.dir, expectHead: "0000000" }),
       ).rejects.toThrow();
       expect(existsSync(wt)).toBe(true);
+    } finally {
+      repo.rm();
+    }
+  });
+});
+
+/** Temp XDG config home carrying a `[sync] exclude` list, isolated per call. */
+function configEnv(exclude: string[]): NodeJS.ProcessEnv {
+  const home = mkdtempSync(join(tmpdir(), "wt-config-"));
+  mkdirSync(join(home, "wt"), { recursive: true });
+  writeFileSync(
+    join(home, "wt", "config.toml"),
+    `[sync]\nexclude = [${exclude.map((p) => JSON.stringify(p)).join(", ")}]\n`,
+  );
+  return { ...process.env, XDG_CONFIG_HOME: home };
+}
+
+function markerFiles(wt: string, repo: FixtureRepo, syncedFiles: string[]): void {
+  const gitDir = repo.gitIn(wt, "rev-parse", "--absolute-git-dir").trim();
+  const now = new Date().toISOString();
+  writeFileSync(
+    join(gitDir, "wt.json"),
+    JSON.stringify({ createdAt: now, updatedAt: now, branch: "lane", base: "main", phase: "ready", syncedFiles }) + "\n",
+  );
+}
+
+describe("runSafetyPipeline env-drift honors sync.exclude", () => {
+  test("suppresses matching paths and keeps non-matching drift (walk fallback)", async () => {
+    const repo = makeRepo();
+    try {
+      writeIn(repo, repo.dir, ".env", "A=1\n");
+      const wt = repo.addWorktree("lane", { branch: "lane" });
+      writeIn(repo, wt, ".env", "A=1\nB=2\n");
+      writeIn(repo, wt, "other/.env", "A=1\nB=2\n");
+      writeIn(repo, wt, ".deepsec/.env.json", "A=1\nB=2\n");
+      const result = await runSafetyPipeline(wt, repo.dir, { env: configEnv([".deepsec"]) });
+      const details = result.flags.filter((f) => f.kind === "env-drift").map((f) => f.detail);
+      expect(details.some((d) => d.startsWith(".env: "))).toBe(true);
+      expect(details.some((d) => d.startsWith("other/.env: "))).toBe(true);
+      expect(details.some((d) => d.includes(".deepsec/"))).toBe(false);
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("hard exclusions suppress drift without user config", async () => {
+    const repo = makeRepo();
+    try {
+      const wt = repo.addWorktree("lane", { branch: "lane" });
+      writeIn(repo, wt, ".conductor/.env", "A=1\nB=2\n");
+      const result = await runSafetyPipeline(wt, repo.dir);
+      expect(result.flags.filter((f) => f.kind === "env-drift")).toEqual([]);
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("gitignore negation re-includes an explicitly kept path", async () => {
+    const repo = makeRepo();
+    try {
+      const wt = repo.addWorktree("lane", { branch: "lane" });
+      writeIn(repo, wt, ".deepsec/.env.drop.json", "A=1\nB=2\n");
+      writeIn(repo, wt, ".deepsec/.env.keep.json", "A=1\nB=2\n");
+      const env = configEnv([".deepsec/.env.drop.json", "!.deepsec/.env.keep.json"]);
+      const result = await runSafetyPipeline(wt, repo.dir, { env });
+      const details = result.flags.filter((f) => f.kind === "env-drift").map((f) => f.detail);
+      expect(details.some((d) => d.includes(".env.drop.json"))).toBe(false);
+      expect(details.some((d) => d.includes(".env.keep.json"))).toBe(true);
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("provenance-backed candidates honor sync.exclude too", async () => {
+    const repo = makeRepo();
+    try {
+      const wt = repo.addWorktree("lane", { branch: "lane" });
+      markerFiles(wt, repo, [".env", ".deepsec/.env.json"]);
+      writeIn(repo, wt, ".env", "A=1\nB=2\n");
+      writeIn(repo, wt, ".deepsec/.env.json", "A=1\nB=2\n");
+      const result = await runSafetyPipeline(wt, repo.dir, { env: configEnv([".deepsec"]) });
+      const details = result.flags.filter((f) => f.kind === "env-drift").map((f) => f.detail);
+      expect(details.some((d) => d.startsWith(".env: "))).toBe(true);
+      expect(details.some((d) => d.includes(".deepsec/"))).toBe(false);
     } finally {
       repo.rm();
     }
