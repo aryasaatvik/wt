@@ -50,6 +50,30 @@ describe("owned disk accounting", () => {
     }
   });
 
+  test("measures only the requested worktree", async () => {
+    const repo = makeRepo();
+    try {
+      const measured = repo.addWorktree("measured", { branch: "feat/measured" });
+      const untouched = repo.addWorktree("untouched", { branch: "feat/untouched" });
+      // Prime every lane's cache so a scoped fresh run has other caches to avoid rewriting.
+      await measureDiskUsage(repo.dir, "fresh");
+      const untouchedCache = join(repo.gitIn(untouched, "rev-parse", "--absolute-git-dir").trim(), "wt-size.json");
+      const before = readFileSync(untouchedCache, "utf8");
+
+      const reports = await measureDiskUsage(repo.dir, "fresh", { only: [measured] });
+
+      expect(reports).toHaveLength(1);
+      expect(reports[0]!.branch).toBe("feat/measured");
+      expect(readFileSync(untouchedCache, "utf8")).toBe(before);
+
+      const json = JSON.parse(await cmdDu({ cwd: repo.dir, target: "feat/measured", json: true, fresh: true }));
+      expect(json).toHaveLength(1);
+      expect(json[0].branch).toBe("feat/measured");
+    } finally {
+      repo.rm();
+    }
+  });
+
   test("preserves missing registered worktrees with unavailable usage", async () => {
     const repo = makeRepo();
     try {

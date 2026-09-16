@@ -77,7 +77,7 @@ cd "$(wt)"
 
 ### Size cache
 
-`wt ls` reports the space owned by each lane: checkout files plus private Git metadata. It does not charge the primary's shared object/module store to every worktree. `wt du` exposes the full checkout/private/owned/shared breakdown; pass a branch, slug, or path to select one lane, and use `--json` or `--fresh` for automation and remeasurement.
+`wt ls` reports the space owned by each lane: checkout files plus private Git metadata. It does not charge the primary's shared object/module store to every worktree. `wt du` exposes the full checkout/private/owned/shared breakdown; pass a branch, slug, or path to select one lane, and use `--json` or `--fresh` for automation and remeasurement. Selecting a lane scans only that lane's checkout — shared storage still reflects the repository, and its accounting still sizes each lane's private Git metadata, but no unrelated lane checkout is walked.
 
 Measurements are cached for 24 hours in each worktree's gitdir (`wt-size.json`) using a versioned schema. A `~` prefix in the SIZE column marks a cached value. `--fresh` remeasures on demand, `--no-size` skips measurement entirely; sizes are display-only, so removal safety never depends on them.
 

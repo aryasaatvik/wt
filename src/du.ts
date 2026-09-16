@@ -1,6 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { humanSize } from "./ls.ts";
+import { listWorktrees } from "./git.ts";
 import { measureDiskUsage, type WorktreeDiskReport } from "./disk.ts";
 
 export interface DuOptions {
@@ -10,13 +11,21 @@ export interface DuOptions {
   fresh: boolean;
 }
 
-function selectTarget(records: WorktreeDiskReport[], cwd: string, target: string): WorktreeDiskReport {
+function canonical(path: string): string {
+  try { return realpathSync.native(path); } catch { return resolve(path); }
+}
+
+/** Resolve a branch, directory name, or path to the owning worktree path. */
+function resolveTargetPath(cwd: string, target: string): string {
   const candidate = resolve(cwd, target);
-  const canonical = existsSync(candidate) ? realpathSync.native(candidate) : null;
-  const record = records.find((item) =>
-    item.branch === target || basename(item.path) === target || (canonical !== null && item.path === canonical));
+  const canonicalCandidate = existsSync(candidate) ? canonical(candidate) : null;
+  const record = listWorktrees(cwd).find((item) =>
+    item.branch === target
+    || basename(item.path) === target
+    || (canonicalCandidate !== null && canonical(item.path) === canonicalCandidate),
+  );
   if (!record) throw new Error(`worktree not found: ${target}`);
-  return record;
+  return record.path;
 }
 
 export function renderDiskTable(records: WorktreeDiskReport[]): string {
@@ -34,7 +43,11 @@ export function renderDiskTable(records: WorktreeDiskReport[]): string {
 }
 
 export async function cmdDu(options: DuOptions): Promise<string> {
-  let records = await measureDiskUsage(options.cwd, options.fresh ? "fresh" : "cached");
-  if (options.target) records = [selectTarget(records, options.cwd, options.target)];
+  const only = options.target ? [resolveTargetPath(options.cwd, options.target)] : undefined;
+  const records = await measureDiskUsage(
+    options.cwd,
+    options.fresh ? "fresh" : "cached",
+    only ? { only } : {},
+  );
   return options.json ? JSON.stringify(records, null, 2) : renderDiskTable(records);
 }
