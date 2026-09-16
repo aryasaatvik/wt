@@ -48,6 +48,7 @@ wt rm lane-1              # remove by directory name — how detached worktrees 
 wt rm ../myrepo-worktrees/lane-1   # remove by path
 wt rm x/my-feature -D     # remove worktree and delete branch
 wt                        # interactive picker (TTY only)
+wt help                   # usage (also -h/--help; never a branch name)
 wt ls                     # status table — always inline, stays in scrollback
 wt ls -v                  # append reachability verdicts
 wt ls --all               # sweep every <repo>-worktrees dir under ~/Developer
