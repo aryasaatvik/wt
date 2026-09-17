@@ -93,6 +93,105 @@ describe("cmdNew", () => {
     }
   });
 
+  test("runs the wt.toml post-install command in the worktree and records it", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write("package.json", '{"packageManager":"bun@1.4.0"}\n');
+      repo.write("wt.toml", '[create]\npostInstall = "printf ran > post-install.txt"\n');
+      repo.commit("post-install config");
+
+      const wtDir = await cmdNew("feat/post-install", "main", {
+        ...OPTS,
+        cwd: repo.dir,
+        install: true,
+        installRunner: async () => 0,
+      });
+
+      expect(existsSync(join(wtDir, "post-install.txt"))).toBe(true);
+      const marker = readProvenance(wtDir);
+      expect(marker?.phase).toBe("ready");
+      expect(marker?.postInstall).toEqual({ command: "printf ran > post-install.txt" });
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("skips the configured post-install command when disabled", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write("package.json", '{"packageManager":"bun@1.4.0"}\n');
+      repo.write("wt.toml", '[create]\npostInstall = "printf ran > post-install.txt"\n');
+      repo.commit("post-install config");
+
+      const wtDir = await cmdNew("feat/post-install-skip", "main", {
+        ...OPTS,
+        cwd: repo.dir,
+        install: true,
+        installRunner: async () => 0,
+        postInstall: false,
+      });
+
+      expect(existsSync(join(wtDir, "post-install.txt"))).toBe(false);
+      expect(readProvenance(wtDir)?.postInstall).toBeUndefined();
+      expect(readProvenance(wtDir)?.phase).toBe("ready");
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("keeps an incomplete worktree and fails when post-install fails", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write("package.json", '{"packageManager":"bun@1.4.0"}\n');
+      repo.write("wt.toml", '[create]\npostInstall = "exit 7"\n');
+      repo.commit("post-install config");
+
+      let failure: unknown;
+      try {
+        await cmdNew("feat/post-install-fail", "main", {
+          ...OPTS,
+          cwd: repo.dir,
+          install: true,
+          installRunner: async () => 0,
+        });
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(ExitError);
+      expect((failure as ExitError).code).toBe(7);
+      const wtDir = join(repo.root, "repo-worktrees", "feat-post-install-fail");
+      expect(readProvenance(wtDir)).toEqual(expect.objectContaining({
+        phase: "incomplete",
+        failure: "post-install exited 7",
+        recoveryCommand: `cd '${wtDir}' && exit 7`,
+      }));
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("rejects a malformed wt.toml before creating the worktree", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write("wt.toml", "[create]\npostInstall = 123\n");
+      repo.commit("bad config");
+
+      let failure: unknown;
+      try {
+        await cmdNew("feat/bad-config", "main", { ...OPTS, cwd: repo.dir });
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(ExitError);
+      expect((failure as ExitError).code).toBe(1);
+      expect(existsSync(join(repo.root, "repo-worktrees", "feat-bad-config"))).toBe(false);
+    } finally {
+      repo.rm();
+    }
+  });
+
   test("keeps an incomplete worktree and fails when dependency install fails", async () => {
     const repo = makeRepo();
     try {

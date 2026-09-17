@@ -11,9 +11,40 @@ import { detail, err, ExitError, info, log } from "./ui.ts";
 export interface CreateOptions {
   verbose: boolean;
   install: boolean;
+  /** Run the repository's `wt.toml` post-install command; defaults to enabled. */
+  postInstall?: boolean;
   cwd: string;
   extraFlags: string[];
   installRunner?: (wtDir: string) => Promise<number>;
+  postInstallRunner?: (wtDir: string, command: string) => Promise<number>;
+}
+
+export interface CreateConfig {
+  /** Command run in the new worktree after dependencies install. */
+  postInstall?: string;
+}
+
+const CONFIG_FILE = "wt.toml";
+
+/**
+ * Read repository create policy from `<repoRoot>/wt.toml`. Read from the primary
+ * checkout, like `.worktreeinclude`, so the command is repository policy rather
+ * than whatever a branch happens to carry.
+ */
+export function readCreateConfig(repoRoot: string): CreateConfig {
+  const path = join(repoRoot, CONFIG_FILE);
+  if (!existsSync(path)) return {};
+  let parsed: { create?: { postInstall?: unknown } };
+  try {
+    parsed = Bun.TOML.parse(readFileSync(path, "utf8")) as typeof parsed;
+  } catch (e) {
+    throw new Error(`${path}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  const postInstall = parsed.create?.postInstall;
+  if (postInstall !== undefined && (typeof postInstall !== "string" || postInstall.trim() === "")) {
+    throw new Error(`${path}: create.postInstall must be a non-empty string`);
+  }
+  return postInstall ? { postInstall: postInstall.trim() } : {};
 }
 
 export function slugFor(branch: string): string {
@@ -51,10 +82,13 @@ export interface ProvenanceMarker {
   updatedAt: string;
   branch: string;
   base: string | null;
-  phase: "created" | "synced" | "installing" | "ready" | "incomplete";
+  phase: "created" | "synced" | "installing" | "post-install" | "ready" | "incomplete";
   syncedFiles: string[];
   failure?: string;
   recoveryCommand?: string;
+  postInstall?: {
+    command: string;
+  };
   sync?: {
     source: string;
     mode: "manifest" | "legacy" | "none";
@@ -97,6 +131,13 @@ export function readProvenance(wtDir: string): ProvenanceMarker | null {
 
 export async function cmdNew(branch: string, base: string, opts: CreateOptions): Promise<string> {
   const repoRoot = resolvePrimaryRepo(opts.cwd);
+  let createConfig: CreateConfig;
+  try {
+    createConfig = readCreateConfig(repoRoot);
+  } catch (e) {
+    err(e instanceof Error ? e.message : String(e));
+    throw new ExitError(1);
+  }
   const slug = slugFor(branch);
   const wtDir = join(dirname(repoRoot), `${basename(repoRoot)}-worktrees`, slug);
 
@@ -175,6 +216,7 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
     : undefined;
   writeProvenance(wtDir, marker);
 
+  let installRan = false;
   if (!opts.install) {
     info("Skipping install (--no-install)");
   } else if (!opts.installRunner && !Bun.which("ni")) {
@@ -184,6 +226,7 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
   } else {
     marker.phase = "installing";
     writeProvenance(wtDir, marker);
+    installRan = true;
     info("Installing dependencies");
     console.log("");
     let code: number;
@@ -212,6 +255,49 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
       detail(`Worktree kept at ${wtDir}\nRetry with: ${marker.recoveryCommand}`);
       throw new ExitError(code || 1);
     }
+  }
+
+  if (createConfig.postInstall && opts.postInstall !== false && installRan) {
+    const command = createConfig.postInstall;
+    marker.phase = "post-install";
+    marker.postInstall = { command };
+    writeProvenance(wtDir, marker);
+    info(`Running post-install: ${bold(command)}`);
+    console.log("");
+    let code: number;
+    try {
+      code = opts.postInstallRunner
+        ? await opts.postInstallRunner(wtDir, command)
+        : await Bun.spawn(["/bin/sh", "-c", command], {
+            cwd: wtDir,
+            stdout: "inherit",
+            stderr: "inherit",
+          }).exited;
+    } catch (e) {
+      marker.phase = "incomplete";
+      marker.failure = `post-install failed: ${e instanceof Error ? e.message : String(e)}`;
+      marker.recoveryCommand = `cd ${shellQuote(wtDir)} && ${command}`;
+      writeProvenance(wtDir, marker);
+      console.log("");
+      err("Post-install failed");
+      detail(`${marker.failure}\nWorktree kept at ${wtDir}\nRetry with: ${marker.recoveryCommand}`);
+      throw new ExitError(1);
+    }
+    console.log("");
+    if (code === 0) log("Post-install finished");
+    else {
+      marker.phase = "incomplete";
+      marker.failure = `post-install exited ${code}`;
+      marker.recoveryCommand = `cd ${shellQuote(wtDir)} && ${command}`;
+      writeProvenance(wtDir, marker);
+      err("Post-install failed");
+      detail(`${marker.failure}\nWorktree kept at ${wtDir}\nRetry with: ${marker.recoveryCommand}`);
+      throw new ExitError(code || 1);
+    }
+  } else if (createConfig.postInstall && opts.postInstall === false) {
+    info("Skipping post-install (--no-post-install)");
+  } else if (createConfig.postInstall && !installRan && opts.install) {
+    info("Skipping post-install (dependencies were not installed)");
   }
 
   marker.phase = "ready";
