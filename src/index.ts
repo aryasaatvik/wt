@@ -65,7 +65,8 @@ for (const a of process.argv.slice(2)) {
   else args.push(a);
 }
 
-if (args[0] === "-h" || args[0] === "--help") {
+// `help` is a reserved word, not a branch: a diagnostic call must never create a worktree.
+if (args[0] === "help" || args[0] === "-h" || args[0] === "--help") {
   console.log(HELP);
   process.exit(0);
 }
