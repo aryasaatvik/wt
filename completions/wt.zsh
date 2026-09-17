@@ -17,6 +17,7 @@ _wt() {
   _arguments -C \
     '--verbose[Show detailed rsync output]' \
     '--no-install[Skip dependency install]' \
+    '--no-post-install[Skip the wt.toml post-install command]' \
     '(-h --help)'{-h,--help}'[Show help]' \
     '1:command:->cmd' \
     '*::arg:->args'

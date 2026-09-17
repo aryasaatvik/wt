@@ -40,6 +40,7 @@ Requires: `git`, `rsync`, [`ni`](https://github.com/antfu/ni), and [`bun`](https
 wt x/my-feature           # create from origin/HEAD (then main/master/dev)
 wt new x/my-feature dev   # create from a specific base branch
 wt new x/my-feature --no-install
+wt new x/my-feature --no-post-install
 wt sync --dry-run          # preview primary -> current worktree
 wt sync --dry-run --json   # machine-readable plan
 wt sync --from current --to x/other
@@ -183,6 +184,19 @@ There is deliberately no `.worktreeignore`: repository policy stays in one order
 Selected dangling symlinks are recreated with `symlink` rather than handed to rsync. macOS openrsync `stat()`s the missing target and would otherwise fail the whole create (rsync exit 23).
 
 `wt sync` defaults to primary → current and supports `--from primary|current|<path>`, `--to <branch|path>`, `--dry-run`, `--json`, and `--force`. If file sync fails, `wt` exits nonzero and prints the captured error output. Creation records the source, manifest hash, copied paths, file count, and byte count in the worktree's `wt.json` marker.
+
+### Post-install hook
+
+A repository may declare a command to run in each new worktree after dependencies install, in `wt.toml` at the repository root:
+
+```toml
+[create]
+postInstall = "bun run build"
+```
+
+`wt` runs it with `sh -c` from the worktree root after `ni`. A nonzero exit keeps the worktree and records `phase: incomplete` with a `cd <worktree> && <command>` recovery line in `wt.json`, matching the install-failure contract. `wt new --no-post-install` skips it; `--no-install` also skips it because dependencies were not installed. The command is read from the primary checkout, like `.worktreeinclude`, so it is repository policy rather than per-branch state.
+
+This keeps a worktree's build fresh at creation. Workspace packages consumed through `dist` are per-worktree, so a worktree that was never built — or was built before `main` moved — can otherwise report errors for symbols that already exist on `main`.
 
 ## Agent integration
 

@@ -18,6 +18,7 @@ ${bold("Commands:")}
   wt [new|create] <branch> [base] [flags]
                        Create worktree from base branch (default: origin/HEAD)
                        Checks out the branch if it already exists
+                       Runs wt.toml [create] postInstall after dependencies
                        Extra flags are passed to git worktree add
   wt sync [flags]       Copy selected ignored files between worktrees
                        --from primary|current|<path>  source (default: primary)
@@ -54,14 +55,17 @@ ${bold("Commands:")}
 ${bold("Options:")}
   --verbose            Show detailed rsync output
   --no-install         Skip dependency install
+  --no-post-install    Skip the wt.toml post-install command
   -h, --help           Show this help`;
 
 let verbose = false;
 let install = true;
+let postInstall = true;
 const args: string[] = [];
 for (const a of process.argv.slice(2)) {
   if (a === "--verbose") verbose = true;
   else if (a === "--no-install") install = false;
+  else if (a === "--no-post-install") postInstall = false;
   else args.push(a);
 }
 
@@ -295,7 +299,7 @@ if (rest.length > 1 && !rest[1]!.startsWith("-")) {
 try {
   const resolvedBase = base ?? defaultBase(cwd) ?? (branchExists(cwd, branch) ? branch : null);
   if (!resolvedBase) throw new Error("cannot determine a default base (set origin/HEAD, create main/master/dev, or pass a base explicitly)");
-  await cmdNew(branch, resolvedBase, { verbose, install, cwd, extraFlags: rest.slice(flagStart) });
+  await cmdNew(branch, resolvedBase, { verbose, install, postInstall, cwd, extraFlags: rest.slice(flagStart) });
 } catch (e) {
   exitFrom(e);
 }
