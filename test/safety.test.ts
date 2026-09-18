@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFile
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { cmdRm } from "../src/rm.ts";
-import { describeEnvDrift, envDriftLosesContent, envKeys, parseEnvAssignments, runSafetyPipeline } from "../src/safety.ts";
+import { describeEnvDrift, envDriftLosesContent, envDriftResolution, envKeys, parseEnvAssignments, runSafetyPipeline } from "../src/safety.ts";
 import { isEnvFile } from "../src/sync.ts";
 import { makeRepo, type FixtureRepo } from "./harness.ts";
 
@@ -65,6 +65,19 @@ describe("parseEnvAssignments", () => {
     expect(parsed.map.get("C")).toBe("'x'");
     expect(parsed.unparsed).toBe(false);
     expect(parseEnvAssignments("A=1\nmultiline\n").unparsed).toBe(true);
+  });
+});
+
+describe("envDriftResolution", () => {
+  test("shell-quotes the lane ref and previews both directions", () => {
+    const lines = envDriftResolution("feat/ev;il`x").join("\n");
+    expect(lines).toContain("to 'feat/ev;il`x'");
+    expect(lines).toContain("--from 'feat/ev;il`x' --to primary");
+    expect(lines).toContain("lane-only env file");
+  });
+
+  test("escapes an embedded single quote", () => {
+    expect(envDriftResolution("a'b").join("\n")).toContain("'a'\\''b'");
   });
 });
 

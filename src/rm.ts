@@ -48,12 +48,12 @@ function listForError(cwd: string): string {
     .join("\n");
 }
 
-function printBlocked(target: string, flags: SafetyFlag[], branch: string | null): void {
+function printBlocked(target: string, flags: SafetyFlag[], laneRef: string): void {
   err(`Not removing ${bold(target)}:`);
   for (const flag of flags) detail(`[${flag.kind}] ${flag.detail}`);
   console.error(`    Resolve the flags first (wt never uses --force).`);
   if (flags.some((flag) => flag.kind === "env-drift")) {
-    for (const line of envDriftResolution(branch)) console.error(`    ${line}`);
+    for (const line of envDriftResolution(laneRef)) console.error(`    ${line}`);
   }
 }
 
@@ -77,7 +77,7 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
   // copied into the archive. Only a clean preview runs the salvaging pass.
   const preview = await runSafetyPipeline(wt.path, repoRoot, { dryRun: true });
   if (!preview.ok) {
-    printBlocked(target, preview.flags, wt.branch ?? null);
+    printBlocked(target, preview.flags, wt.branch ?? wt.path);
     throw new ExitError(1);
   }
   const safety = await runSafetyPipeline(wt.path, repoRoot);
@@ -86,7 +86,7 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
   }
   if (!safety.ok) {
     // something changed between the preview and the salvaging pass
-    printBlocked(target, safety.flags, wt.branch ?? null);
+    printBlocked(target, safety.flags, wt.branch ?? wt.path);
     throw new ExitError(1);
   }
 

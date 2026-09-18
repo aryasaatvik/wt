@@ -104,6 +104,7 @@ describe("cmdRm", () => {
       expect(text).toContain("[env-drift]");
       expect(text).toContain("wt sync --dry-run");
       expect(text).toContain("--force");
+      expect(text).toContain("'feat/env'");
       expect(existsSync(wt)).toBe(true);
     } finally {
       repo.rm();

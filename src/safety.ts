@@ -100,19 +100,28 @@ export function envDriftLosesContent(wtContent: string, primaryContent: string |
   return false;
 }
 
+/** Single-quote a value for a copyable shell command. */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 /**
  * Guidance printed when an env-drift flag blocks removal. Both directions
- * clear the gate; the operator decides which side is authoritative.
+ * clear the gate; the operator decides which side is authoritative. `lane` is
+ * the lane's branch, or its path for a detached worktree.
  */
-export function envDriftResolution(branch: string | null): string[] {
-  const lane = branch ?? "<worktree>";
+export function envDriftResolution(lane: string): string[] {
+  const ref = shellQuote(lane);
   return [
     "env-drift blocks removal: the lane's env is not covered by the primary.",
-    "Reconcile, then rerun:",
-    `  preview:      wt sync --dry-run --from primary --to ${lane}`,
-    `  primary wins: wt sync --from primary --to ${lane} --force`,
-    `  lane wins:    wt sync --from ${lane} --to primary --force`,
-    "  (or edit the env files directly when the repo's sync does not select them)",
+    "Reconcile, then rerun; wt never forces. wt sync moves every selected ignored",
+    "file, not only env, so preview the exact direction before applying:",
+    `  primary -> lane: wt sync --dry-run --from primary --to ${ref}`,
+    `  lane -> primary: wt sync --dry-run --from ${ref} --to primary`,
+    `  overwrite the lane env: wt sync --from primary --to ${ref} --force`,
+    `  adopt the lane env:     wt sync --from ${ref} --to primary --force`,
+    "A lane-only env file has nothing to pull from the primary: adopt it into the",
+    "primary or remove it from the lane; a primary->lane sync will not delete it.",
   ];
 }
 
