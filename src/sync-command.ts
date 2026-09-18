@@ -28,7 +28,10 @@ function resolveLane(cwd: string, value: string | undefined, fallback: "primary"
   const path = resolve(cwd, choice);
   if (existsSync(path)) return realpathSync.native(path);
   const lane = listWorktrees(cwd).find((worktree) => worktree.branch === choice || worktree.path === choice);
-  if (!lane) throw new Error(`worktree not found: ${choice}`);
+  if (!lane)
+    throw new Error(
+      `worktree not found: ${choice} (use a branch name, "primary", "current", or an exact path — not the worktree directory slug)`,
+    );
   return lane.path;
 }
 

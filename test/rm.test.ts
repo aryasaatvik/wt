@@ -85,4 +85,28 @@ describe("cmdRm", () => {
       repo.rm();
     }
   });
+
+  test("env-drift refusal prints the reconciliation commands", async () => {
+    const repo = makeRepo();
+    try {
+      await Bun.write(`${repo.dir}/.env`, "A=1\n");
+      const wt = repo.addWorktree("feat-env", { branch: "feat/env" });
+      await Bun.write(`${wt}/.env`, "A=1\nB=2\n");
+      const errors: string[] = [];
+      const original = console.error;
+      console.error = (...args: unknown[]) => void errors.push(args.map(String).join(" "));
+      try {
+        await expect(cmdRm("feat/env", { deleteBranch: false, cwd: repo.dir })).rejects.toThrow();
+      } finally {
+        console.error = original;
+      }
+      const text = errors.join("\n");
+      expect(text).toContain("[env-drift]");
+      expect(text).toContain("wt sync --dry-run");
+      expect(text).toContain("--force");
+      expect(existsSync(wt)).toBe(true);
+    } finally {
+      repo.rm();
+    }
+  });
 });

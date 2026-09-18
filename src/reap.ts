@@ -262,5 +262,16 @@ export function renderReapReport(entries: ReapEntry[], apply: boolean, applied?:
       `${bold(String(removable.length))} reapable (${humanSize(totalKb)}), ${skips} skipped, ${entries.filter((e) => e.disposition === "keep").length} kept — run with --apply to remove`,
     );
   }
+  if (
+    effective.some(
+      (e) => e.disposition === "skip" && e.safety?.flags.some((f) => f.kind === "env-drift"),
+    )
+  ) {
+    lines.push(
+      dim(
+        "  env-drift: reconcile a lane's env with the primary, then rerun — wt sync --dry-run previews the direction",
+      ),
+    );
+  }
   return lines.join("\n");
 }

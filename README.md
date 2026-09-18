@@ -125,7 +125,7 @@ Task evidence should use canonical paths and identify its source branch/SHA. Rel
 
 - a shared `.scratchpad` link must resolve to the primary's real directory; the check does not traverse shared content
 - an existing local Scratchpad, unexpected link, or unfinished migration blocks removal; use `wt scratchpad` to reconcile and convert it
-- env files (`.env`, `.env.*`, `.dev.vars` — never `*.example` or `*.sample`) that differ from the primary block removal; drift is reported as key **names** only, values are never printed
+- env files (`.env`, `.env.*`, `.dev.vars` — never `*.example` or `*.sample`) block removal only when the lane holds a `KEY=value` the primary lacks (or a differing value). Primary-superset drift, comments, and ordering are lossless and do not block. Drift is reported as key **names** only; values are never printed. Reconcile with `wt sync` in the intended direction before rerunning
 - dirty or status-unreadable worktrees block removal
 
 `wt reap` distinguishes landed commits from `PUSHED_ONLY` feature work. An open or unknown PR state vetoes every automatic removal; `PUSHED_ONLY` requires a confirmed merged PR. Otherwise only `REACHABLE`, `REACHABLE_BRANCH`, `EMPTY`, and `CONTENT_LANDED` (squash-merge detection) can auto-remove.
