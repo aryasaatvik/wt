@@ -59,6 +59,72 @@ export function describeEnvDrift(rel: string, wtContent: string, primaryContent:
   return `${rel}: ${parts.join("; ")}`;
 }
 
+export interface EnvAssignments {
+  map: Map<string, string>;
+  /** true when a non-blank, non-comment line is not a KEY=value assignment */
+  unparsed: boolean;
+}
+
+/** Parse `KEY=value` assignments; blank lines and `#` comments are ignored. */
+export function parseEnvAssignments(content: string): EnvAssignments {
+  const map = new Map<string, string>();
+  let unparsed = false;
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(line);
+    if (!m) {
+      unparsed = true;
+      continue;
+    }
+    map.set(m[1]!, m[2]!.trim());
+  }
+  return { map, unparsed };
+}
+
+/**
+ * True when dropping the worktree's env file would lose configuration the
+ * primary does not already hold: a lane `KEY=value` missing from the primary
+ * or carrying a different value, a file absent from the primary, or content
+ * this parser cannot classify. Extra primary keys, comment/ordering changes,
+ * and other byte differences alone are lossless to discard.
+ */
+export function envDriftLosesContent(wtContent: string, primaryContent: string | null): boolean {
+  if (primaryContent === null) return wtContent.trim().length > 0;
+  const lane = parseEnvAssignments(wtContent);
+  if (lane.unparsed) return true;
+  const primary = parseEnvAssignments(primaryContent).map;
+  for (const [key, value] of lane.map) {
+    if (!primary.has(key) || primary.get(key) !== value) return true;
+  }
+  return false;
+}
+
+/** Single-quote a value for a copyable shell command. */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Guidance printed when an env-drift flag blocks removal. Both directions
+ * clear the gate; the operator decides which side is authoritative. `lane` is
+ * the lane's branch, or its path for a detached worktree.
+ */
+export function envDriftResolution(lane: string): string[] {
+  const ref = shellQuote(lane);
+  return [
+    "env-drift blocks removal: the lane's env is not covered by the primary.",
+    "Reconcile, then rerun; wt never forces. wt sync moves every selected ignored",
+    "file, not only env, so preview the exact direction before applying:",
+    `  primary -> lane: wt sync --dry-run --from primary --to ${ref}`,
+    `  lane -> primary: wt sync --dry-run --from ${ref} --to primary`,
+    `  overwrite the lane env: wt sync --from primary --to ${ref} --force`,
+    `  adopt the lane env:     wt sync --from ${ref} --to primary --force`,
+    "A lane-only env file has nothing to pull from the primary: adopt it into the",
+    "primary or remove it from the lane; a primary->lane sync will not delete it.",
+  ];
+}
+
 function* walkFiles(
   dir: string,
   base: string = dir,
@@ -142,8 +208,13 @@ export async function runSafetyPipeline(
   for (const rel of new Set(candidates)) {
     const wtContent = readIfExists(join(wtPath, rel));
     if (wtContent === null) continue;
-    const drift = describeEnvDrift(rel, wtContent, readIfExists(join(repoRoot, rel)));
-    if (drift) flags.push({ kind: "env-drift", detail: drift });
+    const primaryContent = readIfExists(join(repoRoot, rel));
+    const drift = describeEnvDrift(rel, wtContent, primaryContent);
+    // Only block when removal would lose env content the primary lacks;
+    // primary-superset drift is lossless to discard.
+    if (drift && envDriftLosesContent(wtContent, primaryContent)) {
+      flags.push({ kind: "env-drift", detail: drift });
+    }
   }
 
   return { ok: flags.length === 0, flags, salvaged };

@@ -3,7 +3,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { listWorktrees, resolvePrimaryRepo, type WorktreeInfo } from "./git.ts";
-import { runSafetyPipeline } from "./safety.ts";
+import { envDriftResolution, runSafetyPipeline, type SafetyFlag } from "./safety.ts";
 import { bold, dim, runAsync } from "./term.ts";
 import { detail, err, ExitError, info, log } from "./ui.ts";
 
@@ -48,6 +48,15 @@ function listForError(cwd: string): string {
     .join("\n");
 }
 
+function printBlocked(target: string, flags: SafetyFlag[], laneRef: string): void {
+  err(`Not removing ${bold(target)}:`);
+  for (const flag of flags) detail(`[${flag.kind}] ${flag.detail}`);
+  console.error(`    Resolve the flags first (wt never uses --force).`);
+  if (flags.some((flag) => flag.kind === "env-drift")) {
+    for (const line of envDriftResolution(laneRef)) console.error(`    ${line}`);
+  }
+}
+
 export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
   const wt = resolveTarget(target, opts.cwd);
   if (!wt) {
@@ -68,9 +77,7 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
   // copied into the archive. Only a clean preview runs the salvaging pass.
   const preview = await runSafetyPipeline(wt.path, repoRoot, { dryRun: true });
   if (!preview.ok) {
-    err(`Not removing ${bold(target)}:`);
-    for (const flag of preview.flags) detail(`[${flag.kind}] ${flag.detail}`);
-    console.error(`    Resolve the flags first (wt never uses --force).`);
+    printBlocked(target, preview.flags, wt.branch ?? wt.path);
     throw new ExitError(1);
   }
   const safety = await runSafetyPipeline(wt.path, repoRoot);
@@ -79,9 +86,7 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
   }
   if (!safety.ok) {
     // something changed between the preview and the salvaging pass
-    err(`Not removing ${bold(target)}:`);
-    for (const flag of safety.flags) detail(`[${flag.kind}] ${flag.detail}`);
-    console.error(`    Resolve the flags first (wt never uses --force).`);
+    printBlocked(target, safety.flags, wt.branch ?? wt.path);
     throw new ExitError(1);
   }
 

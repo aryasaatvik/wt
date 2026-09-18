@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFile
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { cmdRm } from "../src/rm.ts";
-import { describeEnvDrift, envKeys, runSafetyPipeline } from "../src/safety.ts";
+import { describeEnvDrift, envDriftLosesContent, envDriftResolution, envKeys, parseEnvAssignments, runSafetyPipeline } from "../src/safety.ts";
 import { isEnvFile } from "../src/sync.ts";
 import { makeRepo, type FixtureRepo } from "./harness.ts";
 
@@ -37,6 +37,47 @@ describe("env helpers", () => {
     expect(drift).not.toContain("pri-secret");
     expect(describeEnvDrift(".env", "A=1\n", "A=1\n")).toBeNull();
     expect(describeEnvDrift(".env", "A=1\n", "A=2\n")).toContain("values differ");
+  });
+});
+
+describe("envDriftLosesContent", () => {
+  test("is lossless when every lane assignment is present in the primary", () => {
+    expect(envDriftLosesContent("A=1\n", "A=1\nB=2\n# note\n")).toBe(false);
+    expect(envDriftLosesContent("# only comments\n\n", "A=1\n")).toBe(false);
+  });
+
+  test("loses content on a lane-only key, a differing value, or a missing primary file", () => {
+    expect(envDriftLosesContent("A=1\nC=3\n", "A=1\nB=2\n")).toBe(true);
+    expect(envDriftLosesContent("A=2\n", "A=1\n")).toBe(true);
+    expect(envDriftLosesContent("A=1\n", null)).toBe(true);
+  });
+
+  test("treats unclassifiable lane content as loss", () => {
+    expect(envDriftLosesContent("A=1\ncontinue-line\n", "A=1\n")).toBe(true);
+  });
+});
+
+describe("parseEnvAssignments", () => {
+  test("extracts normalized key/value pairs and flags unparsed lines", () => {
+    const parsed = parseEnvAssignments("export A=1\nB = two\n# c\n\nC='x'\n");
+    expect(parsed.map.get("A")).toBe("1");
+    expect(parsed.map.get("B")).toBe("two");
+    expect(parsed.map.get("C")).toBe("'x'");
+    expect(parsed.unparsed).toBe(false);
+    expect(parseEnvAssignments("A=1\nmultiline\n").unparsed).toBe(true);
+  });
+});
+
+describe("envDriftResolution", () => {
+  test("shell-quotes the lane ref and previews both directions", () => {
+    const lines = envDriftResolution("feat/ev;il`x").join("\n");
+    expect(lines).toContain("to 'feat/ev;il`x'");
+    expect(lines).toContain("--from 'feat/ev;il`x' --to primary");
+    expect(lines).toContain("lane-only env file");
+  });
+
+  test("escapes an embedded single quote", () => {
+    expect(envDriftResolution("a'b").join("\n")).toContain("'a'\\''b'");
   });
 });
 
@@ -83,6 +124,48 @@ describe("runSafetyPipeline", () => {
       expect(result.ok).toBe(false);
       const drift = result.flags.find((f) => f.kind === "env-drift")!;
       expect(drift.detail).toContain("LANE_ONLY_SECRET");
+      expect(drift.detail).not.toContain("super-secret-value");
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("allows removal when the lane env is covered by the primary", async () => {
+    const repo = makeRepo();
+    try {
+      writeIn(repo, repo.dir, ".env", "SHARED=1\nPRIMARY_ONLY=2\n");
+      const wt = repo.addWorktree("lane", { branch: "lane" });
+      writeIn(repo, wt, ".env", "SHARED=1\n");
+      const result = await runSafetyPipeline(wt, repo.dir);
+      expect(result.flags.filter((f) => f.kind === "env-drift")).toEqual([]);
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("blocks when a lane value differs from the primary", async () => {
+    const repo = makeRepo();
+    try {
+      writeIn(repo, repo.dir, ".env", "SHARED=1\n");
+      const wt = repo.addWorktree("lane", { branch: "lane" });
+      writeIn(repo, wt, ".env", "SHARED=2\n");
+      const result = await runSafetyPipeline(wt, repo.dir);
+      const drift = result.flags.find((f) => f.kind === "env-drift")!;
+      expect(drift.detail).toContain("values differ");
+      expect(drift.detail).not.toContain("SHARED=2");
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("blocks when the lane env file is missing from the primary", async () => {
+    const repo = makeRepo();
+    try {
+      const wt = repo.addWorktree("lane", { branch: "lane" });
+      writeIn(repo, wt, ".env.local", "LANE_ONLY_SECRET=super-secret-value\n");
+      const result = await runSafetyPipeline(wt, repo.dir);
+      const drift = result.flags.find((f) => f.kind === "env-drift")!;
+      expect(drift.detail).toContain("missing in primary");
       expect(drift.detail).not.toContain("super-secret-value");
     } finally {
       repo.rm();
