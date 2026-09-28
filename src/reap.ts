@@ -94,8 +94,7 @@ async function planRepo(repoRoot: string, opts: ReapOptions): Promise<ReapEntry[
       if (!submodules.ok) {
         return { ...base, verdict, verdictText, disposition: "skip", reasons: [submodules.reason] };
       }
-      // dry-run safety evaluation — accurate SKIP prediction, no salvage copies yet
-      const safety = await runSafetyPipeline(record.path, repoRoot, { dryRun: true });
+      const safety = await runSafetyPipeline(record.path, repoRoot);
       if (!safety.ok) {
         return {
           ...base,
@@ -196,13 +195,7 @@ export async function applyReap(entries: ReapEntry[], opts: ApplyOptions = {}): 
       skipped.push({ entry, reason: "landing verdict changed since planning" });
       continue;
     }
-    // Re-evaluate read-only first: if something changed since the plan
-    // (a note edited, a file touched), skip WITHOUT having copied anything.
-    const recheck = await runSafetyPipeline(record.path, repoRoot, { dryRun: true });
-    if (!recheck.ok) {
-      skipped.push({ entry, reason: recheck.flags.map((f) => `[${f.kind}] ${f.detail}`).join("; ") });
-      continue;
-    }
+    // Re-evaluate: something may have changed since the plan (a file touched).
     const submodules = await inspectSubmodules(record.path);
     if (!submodules.ok) {
       skipped.push({ entry, reason: submodules.reason });
@@ -266,11 +259,6 @@ export function renderReapReport(entries: ReapEntry[], apply: boolean, applied?:
         lines.push(
           `  ${color[disposition](label[disposition].padEnd(labelWidth))}  ${e.record.slug.padEnd(30)} ${size.padStart(6)}  ${dim(e.reasons.join("; "))}`,
         );
-        // salvage notices only on removal rows: a SKIP/KEEP lane was never
-        // touched, and implying its notes were archived invites data loss
-        if (disposition === "remove" && e.safety && e.safety.salvaged.length > 0) {
-          lines.push(`  ${" ".repeat(labelWidth)}  ${dim(`salvage: ${e.safety.salvaged.join(", ")}`)}`);
-        }
       }
     }
     lines.push("");

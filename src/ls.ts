@@ -141,7 +141,7 @@ export function discoverPrimaries(root: string, depth = 3): string[] {
   return [...primaries].sort();
 }
 
-export interface LsOptions {
+interface LsOptions {
   json: boolean;
   all: boolean;
   verdicts?: boolean;

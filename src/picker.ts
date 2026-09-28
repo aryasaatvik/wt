@@ -21,13 +21,37 @@ import {
   type LsRecord,
 } from "./ls.ts";
 import { scanWorktrees, type SizeMode } from "./scan.ts";
+import { inspectSubmodules, removeWorktree } from "./rm.ts";
 import { runSafetyPipeline } from "./safety.ts";
-import { pad, runAsync } from "./term.ts";
+import { pad } from "./term.ts";
 
-export interface PickerOptions {
+interface PickerOptions {
   cwd: string;
   verdicts?: boolean;
   sizeMode?: SizeMode;
+}
+
+/**
+ * The picker's `x` action after confirmation: the same submodule and safety
+ * checks and removal as `wt rm`, reported as a one-line status.
+ */
+export async function removeLane(
+  slug: string,
+  path: string,
+  repoRoot: string,
+): Promise<{ removed: boolean; status: string }> {
+  const submodules = await inspectSubmodules(path);
+  if (!submodules.ok) return { removed: false, status: `skipped ${slug}: ${submodules.reason}` };
+  const safety = await runSafetyPipeline(path, repoRoot);
+  if (!safety.ok) {
+    const first = safety.flags[0]!;
+    const more = safety.flags.length > 1 ? ` (+${safety.flags.length - 1} more)` : "";
+    return { removed: false, status: `skipped ${slug}: [${first.kind}] ${first.detail}${more}` };
+  }
+  const rm = await removeWorktree(path, repoRoot, submodules.paths);
+  if (!rm.ok) return { removed: false, status: `failed: ${rm.reason.split("\n")[0] || "git worktree remove error"}` };
+  const retained = rm.retained ? ` · submodule Git data retained at ${rm.retained}` : "";
+  return { removed: true, status: `removed ${slug}${retained}` };
 }
 
 export async function runPicker(opts: PickerOptions): Promise<void> {
@@ -184,22 +208,9 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     status = `checking ${r.slug}…`;
     paint();
     try {
-      const safety = await runSafetyPipeline(r.path, repoRoot);
-      if (!safety.ok) {
-        const first = safety.flags[0]!;
-        const more = safety.flags.length > 1 ? ` (+${safety.flags.length - 1} more)` : "";
-        status = `skipped ${r.slug}: [${first.kind}] ${first.detail}${more}`;
-        return;
-      }
-      const rm = await runAsync(["git", "-C", repoRoot, "worktree", "remove", r.path]);
-      if (!rm.ok) {
-        status = `failed: ${rm.stderr.trim().split("\n")[0] ?? "git worktree remove error"}`;
-        return;
-      }
-      const salvage = safety.salvaged.length ? ` · salvaged ${safety.salvaged.length} note(s)` : "";
-      status = `removed ${r.slug}${salvage}`;
-      await refresh();
-      return;
+      const result = await removeLane(r.slug, r.path, repoRoot);
+      status = result.status;
+      if (result.removed) await refresh();
     } catch (e) {
       // busy must never stay stuck — that would silently freeze every key
       status = `error: ${e instanceof Error ? e.message : e}`;

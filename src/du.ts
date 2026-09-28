@@ -4,7 +4,7 @@ import { humanSize } from "./ls.ts";
 import { listWorktrees } from "./git.ts";
 import { measureDiskUsage, type WorktreeDiskReport } from "./disk.ts";
 
-export interface DuOptions {
+interface DuOptions {
   cwd: string;
   target?: string;
   json: boolean;
@@ -28,7 +28,7 @@ function resolveTargetPath(cwd: string, target: string): string {
   return record.path;
 }
 
-export function renderDiskTable(records: WorktreeDiskReport[]): string {
+function renderDiskTable(records: WorktreeDiskReport[]): string {
   const header = "WORKTREE\tCHECKOUT\tPRIVATE GIT\tOWNED\tSHARED";
   return [header, ...records.map((record) => {
     const usage = record.usage;

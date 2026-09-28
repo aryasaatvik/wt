@@ -98,9 +98,8 @@ describe("runSafetyPipeline", () => {
     try {
       const wt = repo.addWorktree("lane", { branch: "lane" });
       writeIn(repo, wt, ".scratchpad/research/unique.md", "only in lane\n");
-      const result = await runSafetyPipeline(wt, repo.dir, { date: "2026-07-15" });
+      const result = await runSafetyPipeline(wt, repo.dir);
       expect(result.ok).toBe(false);
-      expect(result.salvaged).toEqual([]);
       const dest = join(repo.dir, ".scratchpad/archive/2026-07-15-worktree-salvage/lane/research/unique.md");
       expect(existsSync(dest)).toBe(false);
       expect(readFileSync(join(wt, ".scratchpad/research/unique.md"), "utf8")).toBe("only in lane\n");
@@ -116,10 +115,9 @@ describe("runSafetyPipeline", () => {
       const old = new Date("2026-01-01");
       writeIn(repo, repo.dir, ".scratchpad/plan.md", "primary version\n", old);
       writeIn(repo, wt, ".scratchpad/plan.md", "lane version, newer\n");
-      const result = await runSafetyPipeline(wt, repo.dir, { date: "2026-07-15" });
+      const result = await runSafetyPipeline(wt, repo.dir);
       expect(result.ok).toBe(false);
       expect(result.flags.map((f) => f.kind)).toContain("scratchpad-conflict");
-      expect(result.salvaged).toEqual([]);
     } finally {
       repo.rm();
     }
@@ -178,20 +176,6 @@ describe("runSafetyPipeline", () => {
       const drift = result.flags.find((f) => f.kind === "env-drift")!;
       expect(drift.detail).toContain("missing in primary");
       expect(drift.detail).not.toContain("super-secret-value");
-    } finally {
-      repo.rm();
-    }
-  });
-
-  test("dry run reports a local-copy blocker without copying", async () => {
-    const repo = makeRepo();
-    try {
-      const wt = repo.addWorktree("lane", { branch: "lane" });
-      writeIn(repo, wt, ".scratchpad/unique.md", "x\n");
-      const result = await runSafetyPipeline(wt, repo.dir, { dryRun: true, date: "2026-07-15" });
-      expect(result.salvaged).toEqual([]);
-      expect(result.ok).toBe(false);
-      expect(existsSync(join(repo.dir, ".scratchpad/archive"))).toBe(false);
     } finally {
       repo.rm();
     }

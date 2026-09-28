@@ -16,15 +16,9 @@ export interface SafetyResult {
   /** true when removal may proceed */
   ok: boolean;
   flags: SafetyFlag[];
-  /** Retained in removal reports for existing consumers; shared storage never needs salvage. */
-  salvaged: string[];
 }
 
 export interface SafetyOptions {
-  /** Compatibility with existing callers; checks are always read-only. */
-  dryRun?: boolean;
-  /** Legacy archive date, no longer used. */
-  date?: string;
   /** Environment used to resolve the user's sync config; defaults to process.env. */
   env?: NodeJS.ProcessEnv;
 }
@@ -172,8 +166,6 @@ export async function runSafetyPipeline(
   opts: SafetyOptions = {},
 ): Promise<SafetyResult> {
   const flags: SafetyFlag[] = [];
-  const salvaged: string[] = [];
-
 
   // 1. dirty — fail closed if status is unreadable
   const status = await runAsync(["git", "-C", wtPath, "status", "--porcelain"]);
@@ -219,5 +211,5 @@ export async function runSafetyPipeline(
     }
   }
 
-  return { ok: flags.length === 0, flags, salvaged };
+  return { ok: flags.length === 0, flags };
 }
