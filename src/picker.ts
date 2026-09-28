@@ -21,10 +21,11 @@ import {
   type LsRecord,
 } from "./ls.ts";
 import { scanWorktrees, type SizeMode } from "./scan.ts";
+import { inspectSubmodules, removeWorktree } from "./rm.ts";
 import { runSafetyPipeline } from "./safety.ts";
-import { pad, runAsync } from "./term.ts";
+import { pad } from "./term.ts";
 
-export interface PickerOptions {
+interface PickerOptions {
   cwd: string;
   verdicts?: boolean;
   sizeMode?: SizeMode;
@@ -184,6 +185,11 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     status = `checking ${r.slug}…`;
     paint();
     try {
+      const submodules = await inspectSubmodules(r.path);
+      if (!submodules.ok) {
+        status = `skipped ${r.slug}: ${submodules.reason}`;
+        return;
+      }
       const safety = await runSafetyPipeline(r.path, repoRoot);
       if (!safety.ok) {
         const first = safety.flags[0]!;
@@ -191,13 +197,12 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
         status = `skipped ${r.slug}: [${first.kind}] ${first.detail}${more}`;
         return;
       }
-      const rm = await runAsync(["git", "-C", repoRoot, "worktree", "remove", r.path]);
+      const rm = await removeWorktree(r.path, repoRoot, submodules.paths);
       if (!rm.ok) {
-        status = `failed: ${rm.stderr.trim().split("\n")[0] ?? "git worktree remove error"}`;
+        status = `failed: ${rm.reason.split("\n")[0] || "git worktree remove error"}`;
         return;
       }
-      const salvage = safety.salvaged.length ? ` · salvaged ${safety.salvaged.length} note(s)` : "";
-      status = `removed ${r.slug}${salvage}`;
+      status = `removed ${r.slug}`;
       await refresh();
       return;
     } catch (e) {
