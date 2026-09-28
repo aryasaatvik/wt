@@ -55,6 +55,17 @@ describe("envDriftLosesContent", () => {
   test("treats unclassifiable lane content as loss", () => {
     expect(envDriftLosesContent("A=1\ncontinue-line\n", "A=1\n")).toBe(true);
   });
+
+  test("treats simple quoted and unquoted values as equal", () => {
+    expect(envDriftLosesContent('KEY="v"\n', "KEY=v\n")).toBe(false);
+    expect(envDriftLosesContent("KEY='v'\n", "KEY=v\n")).toBe(false);
+    expect(envDriftLosesContent("KEY=v\n", 'KEY="v"\n')).toBe(false);
+  });
+
+  test("keeps interpolated and escaped quoted values raw", () => {
+    expect(envDriftLosesContent('KEY="$VALUE"\n', "KEY=$VALUE\n")).toBe(true);
+    expect(envDriftLosesContent('KEY="v\\\\n"\n', "KEY=v\\\\n\n")).toBe(true);
+  });
 });
 
 describe("parseEnvAssignments", () => {
@@ -62,7 +73,7 @@ describe("parseEnvAssignments", () => {
     const parsed = parseEnvAssignments("export A=1\nB = two\n# c\n\nC='x'\n");
     expect(parsed.map.get("A")).toBe("1");
     expect(parsed.map.get("B")).toBe("two");
-    expect(parsed.map.get("C")).toBe("'x'");
+    expect(parsed.map.get("C")).toBe("x");
     expect(parsed.unparsed).toBe(false);
     expect(parseEnvAssignments("A=1\nmultiline\n").unparsed).toBe(true);
   });

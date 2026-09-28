@@ -1,7 +1,7 @@
 // wt rm — remove a worktree by branch, slug, or path. Never forces.
 
-import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { existsSync, mkdtempSync, realpathSync, renameSync, rmdirSync, statSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { listWorktrees, resolvePrimaryRepo, type WorktreeInfo } from "./git.ts";
 import { envDriftResolution, runSafetyPipeline, type SafetyFlag } from "./safety.ts";
 import { bold, dim, runAsync } from "./term.ts";
@@ -36,6 +36,12 @@ export function resolveTarget(target: string, cwd: string): WorktreeInfo | null 
     const abs = realpathSync.native(asPath);
     const byPath = worktrees.find((w) => w.path === abs);
     if (byPath) return byPath;
+    try {
+      const owner = resolvePrimaryRepo(abs);
+      return listWorktrees(owner).find((w) => w.path === abs && w.path !== owner) ?? null;
+    } catch {
+      return null;
+    }
   }
   return null;
 }
@@ -57,6 +63,31 @@ function printBlocked(target: string, flags: SafetyFlag[], laneRef: string): voi
   }
 }
 
+function containsPath(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+function canonicalDirectory(path: string): string | null {
+  try {
+    return statSync(path).isDirectory() ? realpathSync.native(path) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function initializedSubmodules(wtPath: string): Promise<string[]> {
+  const listed = await runAsync(["git", "-C", wtPath, "submodule", "status", "--recursive"]);
+  if (!listed.ok) throw new Error(`Cannot inspect submodules: ${listed.stderr.trim()}`);
+  const paths: string[] = [];
+  for (const line of listed.stdout.split("\n").filter(Boolean)) {
+    const match = /^([- +U])[0-9a-f]{40,64} (.+?)(?: \([^)]*\))?$/.exec(line);
+    if (!match) throw new Error("Cannot parse submodule status; not removing");
+    if (match[1] !== "-") paths.push(match[2]!);
+  }
+  return paths;
+}
+
 export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
   const wt = resolveTarget(target, opts.cwd);
   if (!wt) {
@@ -72,7 +103,34 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
     throw new ExitError(1);
   }
 
-  const repoRoot = resolvePrimaryRepo(opts.cwd);
+  const targetPath = realpathSync.native(wt.path);
+  const callerPaths = [opts.cwd, process.env.PWD];
+  if (callerPaths.some((path) => {
+    const canonical = path ? canonicalDirectory(path) : null;
+    return canonical !== null && containsPath(targetPath, canonical);
+  })) {
+    err(`Cannot remove ${bold(target)} from inside that worktree`);
+    detail("Run wt rm from the primary checkout or another worktree.");
+    throw new ExitError(1);
+  }
+
+  const repoRoot = resolvePrimaryRepo(wt.path);
+  let submodules: string[];
+  try {
+    submodules = await initializedSubmodules(wt.path);
+  } catch (error) {
+    err(`Cannot inspect submodules in ${bold(target)} — not removing`);
+    detail(String(error));
+    throw new ExitError(1);
+  }
+  for (const path of submodules) {
+    const status = await runAsync(["git", "-C", join(wt.path, path), "status", "--porcelain", "--untracked-files=all", "--ignored"]);
+    if (!status.ok || status.stdout.trim()) {
+      err(`Submodule ${bold(path)} has changes or cannot be inspected — not removing ${bold(target)}`);
+      if (!status.ok) detail(status.stderr.trim());
+      throw new ExitError(1);
+    }
+  }
   // Evaluate read-only first: when removal is blocked, nothing has been
   // copied into the archive. Only a clean preview runs the salvaging pass.
   const preview = await runSafetyPipeline(wt.path, repoRoot, { dryRun: true });
@@ -96,17 +154,60 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
     throw new ExitError(1);
   }
 
+  if (submodules.length) {
+    const deinitialized = await runAsync(["git", "-C", wt.path, "submodule", "deinit", "--all"]);
+    if (!deinitialized.ok) {
+      err(`Failed to deinitialize submodules in ${bold(target)}`);
+      detail(deinitialized.stderr.trim());
+      throw new ExitError(1);
+    }
+  }
+
+  // Git still rejects a deinitialized worktree while its per-worktree modules directory exists.
+  let moduleArchive: { source: string; destination: string; directory: string } | null = null;
+  if (submodules.length) {
+    const metadata = await runAsync(["git", "-C", wt.path, "rev-parse", "--absolute-git-dir"]);
+    if (!metadata.ok || !metadata.stdout.trim()) {
+      err(`Cannot locate submodule Git data in ${bold(target)} — not removing`);
+      throw new ExitError(1);
+    }
+    const gitDir = metadata.stdout.trim();
+    const source = join(gitDir, "modules");
+    if (existsSync(source)) {
+      const directory = mkdtempSync(join(dirname(dirname(gitDir)), "wt-submodules-"));
+      const destination = join(directory, "modules");
+      try {
+        renameSync(source, destination);
+      } catch (error) {
+        rmdirSync(directory);
+        err(`Cannot preserve submodule Git data in ${bold(target)} — not removing`);
+        detail(String(error));
+        throw new ExitError(1);
+      }
+      moduleArchive = { source, destination, directory };
+    }
+  }
+
   info(`Removing worktree ${bold(target)}`);
-  const removed = await runAsync(["git", "-C", opts.cwd, "worktree", "remove", wt.path]);
+  const removed = await runAsync(["git", "-C", repoRoot, "worktree", "remove", wt.path]);
   if (!removed.ok) {
+    if (moduleArchive) {
+      try {
+        renameSync(moduleArchive.destination, moduleArchive.source);
+        rmdirSync(moduleArchive.directory);
+      } catch {
+        detail(`Submodule Git data retained at ${moduleArchive.destination}`);
+      }
+    }
     err("Failed to remove worktree");
     detail(removed.stderr);
     throw new ExitError(1);
   }
   log(`Removed ${dim(wt.path)}`);
+  if (moduleArchive) log(`Retained submodule Git data at ${dim(moduleArchive.destination)}`);
 
   if (opts.deleteBranch && wt.branch) {
-    const deleted = await runAsync(["git", "-C", opts.cwd, "branch", "-D", wt.branch]);
+    const deleted = await runAsync(["git", "-C", repoRoot, "branch", "-D", wt.branch]);
     if (!deleted.ok) {
       err(`Failed to delete branch ${bold(wt.branch)}`);
       detail(deleted.stderr);
