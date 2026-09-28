@@ -91,8 +91,9 @@ preview and convert first with `wt scratchpad`. `wt` evaluates the pipeline read
 never passes `--force` to Git.
 
 A lane with initialized submodules is removed only when every submodule checkout is clean (no
-changes, untracked, or ignored files); `wt rm` then runs `git submodule deinit --all` and retains the
-lane's submodule Git data under the primary's `.git/wt-submodules-*`, printing its path.
+changes, untracked, or ignored files); `wt rm` and `wt reap --apply` then run `git submodule deinit
+--all`, restore the primary's submodule config that deinit clears, and retain the lane's submodule Git
+data under the primary's `.git/wt-submodules-*`.
 
 ### Scratchpad
 
@@ -142,7 +143,7 @@ Open or unknown PR state vetoes automatic removal. PUSHED_ONLY lanes require a c
 otherwise only REACHABLE / REACHABLE_BRANCH / EMPTY / CONTENT_LANDED lanes auto-remove. For a lane
 whose PR merged, CONTENT_LANDED compares the lane's files with that PR's merge commit when it is
 fetched and on the default branch, so a squash-merged stacked lane lands even after main later edits
-a lower layer's files. Apply is sequential and rechecks the exact HEAD, current PR state, merge
+a lower layer's files; a path main has reverted to its pre-merge content keeps the lane. Apply is sequential and rechecks the exact HEAD, current PR state, merge
 commit, verdict, and safety pipeline immediately before each removal; any change demotes the lane to SKIP. Branches remain available. Exit code 1 means
 something was skipped and needs a human.
 

@@ -141,11 +141,11 @@ Task evidence should use canonical paths and identify its source branch/SHA. Rel
 - env files (`.env`, `.env.*`, `.dev.vars` — never `*.example` or `*.sample`) block removal only when the lane holds a `KEY=value` the primary lacks (or a differing value). Primary-superset drift, comments, ordering, and a simple value written with or without enclosing quotes are lossless and do not block. Drift is reported as key **names** only; values are never printed. Reconcile with `wt sync` in the intended direction before rerunning
 - dirty or status-unreadable worktrees block removal
 - `wt rm` refuses a worktree that contains the caller's current directory
-- initialized submodules must be clean (no changes, untracked, or ignored files); `wt rm` then runs `git submodule deinit --all` and retains the lane's submodule Git data under the primary's `.git/wt-submodules-*`
+- initialized submodules must be clean (no changes, untracked, or ignored files); removal then runs `git submodule deinit --all`, restores the primary's submodule config that deinit clears, and retains the lane's submodule Git data under the primary's `.git/wt-submodules-*`
 
 An exact path given to `wt rm` may name a worktree of another repository; branch and directory names resolve only in the current repository.
 
-`wt reap` distinguishes landed commits from `PUSHED_ONLY` feature work. An open or unknown PR state vetoes every automatic removal; `PUSHED_ONLY` requires a confirmed merged PR. Otherwise only `REACHABLE`, `REACHABLE_BRANCH`, `EMPTY`, and `CONTENT_LANDED` (squash-merge detection) can auto-remove. When the lane's PR merged and its merge commit is fetched and on the default branch, `CONTENT_LANDED` compares against that commit's tree instead of the current default branch, so a squash-merged stacked lane still lands after main later edits a lower layer's files.
+`wt reap` distinguishes landed commits from `PUSHED_ONLY` feature work. An open or unknown PR state vetoes every automatic removal; `PUSHED_ONLY` requires a confirmed merged PR. Otherwise only `REACHABLE`, `REACHABLE_BRANCH`, `EMPTY`, and `CONTENT_LANDED` (squash-merge detection) can auto-remove. When the lane's PR merged and its merge commit is fetched and on the default branch, `CONTENT_LANDED` compares against that commit's tree instead of the current default branch, so a squash-merged stacked lane still lands after main later edits a lower layer's files. A path that main has returned to its pre-merge content counts as reverted and keeps the lane.
 
 Ahead/behind counts compare a lane with its own `origin/<branch>` when that ref exists, then its upstream, then the origin default.
 
