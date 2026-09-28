@@ -129,8 +129,24 @@ export async function classifyWorktree(wtPath: string, mergeCommit?: string | nu
   const differsRes = await g("--literal-pathspecs", "diff", "--name-only", "-z", head, compareRef, "--", ...files);
   if (!differsRes.ok) return { kind: "PROBE_FAILED", ref: compareRef };
   const differing = differsRes.stdout.split("\0").filter(Boolean).length;
-  if (differing === 0) return { kind: "CONTENT_LANDED", ref: compareRef, total: files.length };
-  return pushedOnly ?? { kind: "STRANDED", ref: compareRef, differing, total: files.length };
+  if (differing > 0) return pushedOnly ?? { kind: "STRANDED", ref: compareRef, differing, total: files.length };
+  if (!mergedRef) return { kind: "CONTENT_LANDED", ref: compareRef, total: files.length };
+
+  // The merge tree matches. Paths where the default branch has since moved
+  // must not have returned to their pre-merge content: that is a revert, and
+  // the lane's work is no longer on the default branch.
+  const movedRes = await g("--literal-pathspecs", "diff", "--name-only", "-z", head, defRef, "--", ...files);
+  if (!movedRes.ok) return { kind: "PROBE_FAILED", ref: defRef };
+  const moved = movedRes.stdout.split("\0").filter(Boolean);
+  if (moved.length > 0) {
+    const editedRes = await g("--literal-pathspecs", "diff", "--name-only", "-z", `${mergedRef}^1`, defRef, "--", ...moved);
+    if (!editedRes.ok) return { kind: "PROBE_FAILED", ref: defRef };
+    const edited = new Set(editedRes.stdout.split("\0").filter(Boolean));
+    if (moved.some((path) => !edited.has(path))) {
+      return pushedOnly ?? { kind: "STRANDED", ref: defRef, differing: moved.length, total: files.length };
+    }
+  }
+  return { kind: "CONTENT_LANDED", ref: mergedRef, total: files.length };
 }
 
 export function verdictLabel(v: Verdict, prState?: string, prNumber?: number | null): string {

@@ -210,6 +210,27 @@ describe("classifyWorktree", () => {
     }
   });
 
+  test("STRANDED: a merged PR later reverted on main is not landed", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      const wt = repo.addWorktree("feat-reverted", { branch: "feat/reverted" });
+      await Bun.write(`${wt}/feature.txt`, "feature\n");
+      repo.gitIn(wt, "add", "-A");
+      repo.gitIn(wt, "commit", "-m", "feature work");
+      repo.git("merge", "--squash", "feat/reverted");
+      repo.git("commit", "-m", "squash feature");
+      const mergeCommit = repo.git("rev-parse", "HEAD").trim();
+      repo.git("revert", "--no-edit", mergeCommit);
+      repo.git("push", "origin", "main");
+      expect(await classifyWorktree(wt, mergeCommit)).toEqual({
+        kind: "STRANDED", ref: "origin/main", differing: 1, total: 1,
+      });
+    } finally {
+      repo.rm();
+    }
+  });
+
   test("PUSHED_ONLY: a merge tree that differs never demotes published work", async () => {
     const repo = makeRepo();
     try {
