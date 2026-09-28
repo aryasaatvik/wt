@@ -88,6 +88,121 @@ async function initializedSubmodules(wtPath: string): Promise<string[]> {
   return paths;
 }
 
+/**
+ * Initialized submodules in a lane, refusing any that is dirty, holds
+ * untracked or ignored files, or cannot be inspected.
+ */
+export async function inspectSubmodules(
+  wtPath: string,
+): Promise<{ ok: true; paths: string[] } | { ok: false; reason: string }> {
+  let paths: string[];
+  try {
+    paths = await initializedSubmodules(wtPath);
+  } catch (error) {
+    return { ok: false, reason: String(error instanceof Error ? error.message : error) };
+  }
+  for (const path of paths) {
+    const status = await runAsync(["git", "-C", join(wtPath, path), "status", "--porcelain", "--untracked-files=all", "--ignored"]);
+    if (!status.ok) return { ok: false, reason: `submodule ${path} cannot be inspected: ${status.stderr.trim()}` };
+    if (status.stdout.trim()) return { ok: false, reason: `submodule ${path} has changes, untracked, or ignored files` };
+  }
+  return { ok: true, paths };
+}
+
+async function submoduleConfig(configFile: string): Promise<Array<[string, string]>> {
+  const res = await runAsync(["git", "config", "--file", configFile, "--null", "--get-regexp", "^submodule\\."]);
+  if (!res.ok) return [];
+  return res.stdout.split("\0").filter(Boolean).map((entry) => {
+    const at = entry.indexOf("\n");
+    return at === -1 ? [entry, ""] : [entry.slice(0, at), entry.slice(at + 1)];
+  });
+}
+
+async function restoreSubmoduleConfig(configFile: string, entries: Array<[string, string]>): Promise<boolean> {
+  const current = new Set((await submoduleConfig(configFile)).map(([key]) => key));
+  let ok = true;
+  for (const [key, value] of entries) {
+    if (current.has(key)) continue;
+    ok = (await runAsync(["git", "config", "--file", configFile, "--add", key, value])).ok && ok;
+  }
+  return ok;
+}
+
+/**
+ * Remove a lane with `git worktree remove`, never forced. Git refuses a lane
+ * with initialized submodules, so clean ones (see inspectSubmodules) are
+ * deinitialized first and the lane's submodule Git data is moved under the
+ * primary's .git rather than deleted. Deinit also unregisters submodules in
+ * the config shared with the primary, so that config is restored. Any failure
+ * after deinit reinitializes the lane's submodules at their recorded commits.
+ */
+export async function removeWorktree(
+  wtPath: string,
+  repoRoot: string,
+  submodules: string[],
+): Promise<{ ok: true; retained: string | null } | { ok: false; reason: string }> {
+  const remove = () => runAsync(["git", "-C", repoRoot, "worktree", "remove", wtPath]);
+  if (submodules.length === 0) {
+    const removed = await remove();
+    return removed.ok ? { ok: true, retained: null } : { ok: false, reason: removed.stderr.trim() };
+  }
+
+  const dirs = await runAsync(["git", "-C", wtPath, "rev-parse", "--absolute-git-dir", "--git-common-dir"]);
+  const [gitDir, commonRel] = dirs.stdout.trim().split("\n");
+  if (!dirs.ok || !gitDir || !commonRel) return { ok: false, reason: "cannot locate the lane's Git directory" };
+  const commonDir = resolve(wtPath, commonRel);
+  const configFile = join(commonDir, "config");
+  const snapshot = await submoduleConfig(configFile);
+  const source = join(gitDir, "modules");
+  let archive: string;
+  try {
+    archive = mkdtempSync(join(commonDir, "wt-submodules-"));
+  } catch (error) {
+    return { ok: false, reason: `cannot reserve submodule Git data archive: ${error}` };
+  }
+  const destination = join(archive, "modules");
+
+  const recover = async (reason: string) => {
+    const notes = [reason];
+    if (!existsSync(source) && existsSync(destination)) {
+      try {
+        renameSync(destination, source);
+      } catch {
+        notes.push(`submodule Git data retained at ${destination}`);
+      }
+    }
+    if (!existsSync(destination)) {
+      try {
+        rmdirSync(archive);
+      } catch {}
+    }
+    if (!(await restoreSubmoduleConfig(configFile, snapshot))) notes.push("submodule config not fully restored");
+    const reinit = await runAsync(["git", "-C", wtPath, "submodule", "update", "--init", "--recursive"]);
+    if (!reinit.ok) notes.push(`submodules not reinitialized: ${reinit.stderr.trim()}`);
+    return { ok: false as const, reason: notes.join("; ") };
+  };
+
+  const deinit = await runAsync(["git", "-C", wtPath, "submodule", "deinit", "--all"]);
+  if (!deinit.ok) return recover(`submodule deinit failed: ${deinit.stderr.trim()}`);
+  if (!(await restoreSubmoduleConfig(configFile, snapshot))) return recover("cannot restore the primary's submodule config");
+  if (existsSync(source)) {
+    try {
+      renameSync(source, destination);
+    } catch (error) {
+      return recover(`cannot preserve submodule Git data: ${error}`);
+    }
+  }
+  const removed = await remove();
+  if (!removed.ok) return recover(removed.stderr.trim());
+  if (!existsSync(destination)) {
+    try {
+      rmdirSync(archive);
+    } catch {}
+    return { ok: true, retained: null };
+  }
+  return { ok: true, retained: destination };
+}
+
 export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
   const wt = resolveTarget(target, opts.cwd);
   if (!wt) {
@@ -115,21 +230,10 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
   }
 
   const repoRoot = resolvePrimaryRepo(wt.path);
-  let submodules: string[];
-  try {
-    submodules = await initializedSubmodules(wt.path);
-  } catch (error) {
-    err(`Cannot inspect submodules in ${bold(target)} — not removing`);
-    detail(String(error));
+  const submodules = await inspectSubmodules(wt.path);
+  if (!submodules.ok) {
+    err(`Not removing ${bold(target)}: ${submodules.reason}`);
     throw new ExitError(1);
-  }
-  for (const path of submodules) {
-    const status = await runAsync(["git", "-C", join(wt.path, path), "status", "--porcelain", "--untracked-files=all", "--ignored"]);
-    if (!status.ok || status.stdout.trim()) {
-      err(`Submodule ${bold(path)} has changes or cannot be inspected — not removing ${bold(target)}`);
-      if (!status.ok) detail(status.stderr.trim());
-      throw new ExitError(1);
-    }
   }
   // Evaluate read-only first: when removal is blocked, nothing has been
   // copied into the archive. Only a clean preview runs the salvaging pass.
@@ -154,57 +258,15 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
     throw new ExitError(1);
   }
 
-  if (submodules.length) {
-    const deinitialized = await runAsync(["git", "-C", wt.path, "submodule", "deinit", "--all"]);
-    if (!deinitialized.ok) {
-      err(`Failed to deinitialize submodules in ${bold(target)}`);
-      detail(deinitialized.stderr.trim());
-      throw new ExitError(1);
-    }
-  }
-
-  // Git still rejects a deinitialized worktree while its per-worktree modules directory exists.
-  let moduleArchive: { source: string; destination: string; directory: string } | null = null;
-  if (submodules.length) {
-    const metadata = await runAsync(["git", "-C", wt.path, "rev-parse", "--absolute-git-dir"]);
-    if (!metadata.ok || !metadata.stdout.trim()) {
-      err(`Cannot locate submodule Git data in ${bold(target)} — not removing`);
-      throw new ExitError(1);
-    }
-    const gitDir = metadata.stdout.trim();
-    const source = join(gitDir, "modules");
-    if (existsSync(source)) {
-      const directory = mkdtempSync(join(dirname(dirname(gitDir)), "wt-submodules-"));
-      const destination = join(directory, "modules");
-      try {
-        renameSync(source, destination);
-      } catch (error) {
-        rmdirSync(directory);
-        err(`Cannot preserve submodule Git data in ${bold(target)} — not removing`);
-        detail(String(error));
-        throw new ExitError(1);
-      }
-      moduleArchive = { source, destination, directory };
-    }
-  }
-
   info(`Removing worktree ${bold(target)}`);
-  const removed = await runAsync(["git", "-C", repoRoot, "worktree", "remove", wt.path]);
+  const removed = await removeWorktree(wt.path, repoRoot, submodules.paths);
   if (!removed.ok) {
-    if (moduleArchive) {
-      try {
-        renameSync(moduleArchive.destination, moduleArchive.source);
-        rmdirSync(moduleArchive.directory);
-      } catch {
-        detail(`Submodule Git data retained at ${moduleArchive.destination}`);
-      }
-    }
     err("Failed to remove worktree");
-    detail(removed.stderr);
+    detail(removed.reason);
     throw new ExitError(1);
   }
   log(`Removed ${dim(wt.path)}`);
-  if (moduleArchive) log(`Retained submodule Git data at ${dim(moduleArchive.destination)}`);
+  if (removed.retained) log(`Retained submodule Git data at ${dim(removed.retained)}`);
 
   if (opts.deleteBranch && wt.branch) {
     const deleted = await runAsync(["git", "-C", repoRoot, "branch", "-D", wt.branch]);

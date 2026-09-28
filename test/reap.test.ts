@@ -90,6 +90,36 @@ describe("wt reap", () => {
     }
   }, 30000);
 
+  test("removes a lane with clean submodules and skips a dirty one", async () => {
+    const module = makeRepo();
+    const repo = makeRepo();
+    try {
+      repo.git("-c", "protocol.file.allow=always", "submodule", "add", module.dir, "vendor/module");
+      repo.commit("add submodule");
+      repo.addOrigin();
+      const head = repo.git("rev-parse", "HEAD").trim();
+      const clean = repo.addWorktree("lane-clean-module", { detachAt: head });
+      repo.gitIn(clean, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive");
+      const dirty = repo.addWorktree("lane-dirty-module", { detachAt: head });
+      repo.gitIn(dirty, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive");
+      write(dirty, "vendor/module/untracked.txt", "keep\n");
+      const pr = conclusiveNoPrScan(repo);
+      const entries = await planReap({ all: false, cwd: repo.dir, scan: pr });
+      expect(dispositionOf(entries, "lane-clean-module").disposition).toBe("remove");
+      expect(dispositionOf(entries, "lane-dirty-module").disposition).toBe("skip");
+      expect(dispositionOf(entries, "lane-dirty-module").reasons.join(" ")).toContain("vendor/module");
+
+      const applied = await applyReap(entries, { env: pr.env });
+      expect(applied.removed.map((e) => e.record.slug)).toEqual(["lane-clean-module"]);
+      expect(existsSync(clean)).toBe(false);
+      expect(existsSync(join(dirty, "vendor/module/untracked.txt"))).toBe(true);
+      expect(repo.git("config", "--get", "submodule.vendor/module.url").trim()).toBe(module.dir);
+    } finally {
+      repo.rm();
+      module.rm();
+    }
+  }, 30000);
+
   test("apply skips a lane whose HEAD moved since the plan (TOCTOU)", async () => {
     const repo = makeRepo();
     try {

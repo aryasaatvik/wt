@@ -222,6 +222,9 @@ describe("cmdRm", () => {
       const archives = readdirSync(join(repo.dir, ".git")).filter((name) => name.startsWith("wt-submodules-"));
       expect(archives).toHaveLength(1);
       expect(existsSync(join(repo.dir, ".git", archives[0]!, "modules/vendor/module/HEAD"))).toBe(true);
+      // deinit in the lane must not unregister the primary's submodule
+      expect(repo.git("config", "--get", "submodule.vendor/module.url").trim()).toBe(module.dir);
+      expect(repo.git("submodule", "status").trim().startsWith("-")).toBe(false);
     } finally {
       repo.rm();
       module.rm();

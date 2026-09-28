@@ -9,6 +9,7 @@
 import { basename, dirname, join } from "node:path";
 import { discoverPrimaries, humanSize } from "./ls.ts";
 import { resolvePrimaryRepo } from "./git.ts";
+import { inspectSubmodules, removeWorktree } from "./rm.ts";
 import { runSafetyPipeline, type SafetyResult } from "./safety.ts";
 import { fetchPrs, prForCommit, prStateFor, remoteRepos, scanWorktrees, type ScanOptions, type WorktreeStatus } from "./scan.ts";
 import { bold, dim, gray, green, pool, red, runAsync, yellow } from "./term.ts";
@@ -88,6 +89,10 @@ async function planRepo(repoRoot: string, opts: ReapOptions): Promise<ReapEntry[
             reasons: [`last commit newer than ${opts.olderThanDays}d`],
           };
         }
+      }
+      const submodules = await inspectSubmodules(record.path);
+      if (!submodules.ok) {
+        return { ...base, verdict, verdictText, disposition: "skip", reasons: [submodules.reason] };
       }
       // dry-run safety evaluation — accurate SKIP prediction, no salvage copies yet
       const safety = await runSafetyPipeline(record.path, repoRoot, { dryRun: true });
@@ -199,14 +204,19 @@ export async function applyReap(entries: ReapEntry[], opts: ApplyOptions = {}): 
       skipped.push({ entry, reason: recheck.flags.map((f) => `[${f.kind}] ${f.detail}`).join("; ") });
       continue;
     }
+    const submodules = await inspectSubmodules(record.path);
+    if (!submodules.ok) {
+      skipped.push({ entry, reason: submodules.reason });
+      continue;
+    }
     const safety = await runSafetyPipeline(record.path, repoRoot);
     if (!safety.ok) {
       skipped.push({ entry, reason: safety.flags.map((f) => `[${f.kind}] ${f.detail}`).join("; ") });
       continue;
     }
-    const rm = await runAsync(["git", "-C", repoRoot, "worktree", "remove", record.path]);
+    const rm = await removeWorktree(record.path, repoRoot, submodules.paths);
     if (!rm.ok) {
-      skipped.push({ entry, reason: rm.stderr.trim() });
+      skipped.push({ entry, reason: rm.reason });
       continue;
     }
     entry.safety = safety;
