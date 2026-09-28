@@ -121,10 +121,13 @@ function validate(plan: MigrationPlan, current: MigrationPlan): void {
   for (const entry of current.entries) {
     if (entry.status !== "review") continue;
     const decision = resolutions.get(entry.path);
-    if (!decision || decision.sourceHash !== entry.hash || !["integrated", "superseded", "preserved"].includes(decision.disposition) || typeof decision.reason !== "string" || !decision.reason.trim()) {
-      throw new Error(`unreconciled Scratchpad entry: ${entry.path}`);
+    if (!decision) throw new Error(`unreconciled Scratchpad entry: ${entry.path}; add a resolution`);
+    if (decision.sourceHash !== entry.hash) throw new Error(`resolution.sourceHash must match the preview entry hash: ${entry.path}`);
+    if (!["integrated", "superseded", "preserved"].includes(decision.disposition)) throw new Error(`resolution.disposition must be integrated, superseded, or preserved: ${entry.path}`);
+    if (typeof decision.reason !== "string" || !decision.reason.trim()) throw new Error(`resolution.reason must be a non-empty string: ${entry.path}`);
+    if (!decision.evidence || typeof decision.evidence.path !== "string" || !decision.evidence.path || typeof decision.evidence.hash !== "string" || !/^[0-9a-f]{64}$/.test(decision.evidence.hash)) {
+      throw new Error(`resolution.evidence must be { path: <canonical relative regular file>, hash: <SHA-256 hex> }: ${entry.path}`);
     }
-    if (!decision.evidence || typeof decision.evidence.path !== "string" || typeof decision.evidence.hash !== "string") throw new Error(`missing canonical evidence: ${entry.path}`);
     const evidence = regularEvidence(join(current.primary, ".scratchpad"), decision.evidence.path);
     if (!evidence || evidence.hash !== decision.evidence.hash) throw new Error(`canonical evidence changed or missing: ${entry.path}`);
     if (decision.disposition === "preserved" && (entry.kind !== "file" || evidence.hash !== entry.hash || evidence.mode !== entry.mode)) {

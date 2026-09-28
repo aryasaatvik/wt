@@ -58,6 +58,36 @@ ${bold("Options:")}
   --no-post-install    Skip the wt.toml post-install command
   -h, --help           Show this help`;
 
+const SCRATCHPAD_HELP = `${bold("Usage:")} wt scratchpad <target> [--json | --apply <plan.json>]
+
+Preview a local Scratchpad with --json, reconcile each review entry into the
+primary Scratchpad, then add its resolution to the saved plan before --apply.
+
+Minimal plan example (keep snapshot fields from the --json preview):
+{
+  "version": 1,
+  "primary": "/path/to/repo",
+  "worktree": "/path/to/repo-worktrees/lane",
+  "head": "<commit SHA from preview>",
+  "state": "legacy",
+  "sourceHash": "<snapshot hash from preview>",
+  "entries": [
+    { "path": "note.md", "kind": "file", "hash": "<entry hash from preview>", "mode": 420, "status": "review" }
+  ],
+  "resolutions": [
+    {
+      "path": "note.md",
+      "sourceHash": "<entry hash from preview>",
+      "disposition": "integrated",
+      "reason": "Relevant facts are in the canonical note.",
+      "evidence": { "path": "notes/canonical.md", "hash": "<canonical file SHA-256>" }
+    }
+  ]
+}
+
+Dispositions: integrated, superseded, preserved. Evidence is a regular file
+inside the primary Scratchpad; its hash is the SHA-256 of its contents.`;
+
 let verbose = false;
 let install = true;
 let postInstall = true;
@@ -172,6 +202,10 @@ if (command === "reap") {
 }
 
 if (command === "scratchpad") {
+  if (args[1] === "--help" || args[1] === "-h") {
+    console.log(SCRATCHPAD_HELP);
+    process.exit(0);
+  }
   const target = args[1];
   let apply: string | undefined;
   let json = false;

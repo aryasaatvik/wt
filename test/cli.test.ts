@@ -35,4 +35,29 @@ describe("wt cli", () => {
       repo.rm();
     }
   });
+
+  test("`wt scratchpad --help` prints usage and a complete plan example", () => {
+    const repo = makeRepo();
+    try {
+      const result = runWt(repo.dir, ["scratchpad", "--help"]);
+      const output = result.stdout.toString();
+      expect(result.exitCode).toBe(0);
+      expect(output).toContain("Usage: wt scratchpad <target>");
+      expect(output).not.toContain("expects a worktree target");
+      const start = output.indexOf("{\n");
+      const end = output.lastIndexOf("\n}");
+      const example = JSON.parse(output.slice(start, end + 2));
+      expect(Object.keys(example)).toEqual(["version", "primary", "worktree", "head", "state", "sourceHash", "entries", "resolutions"]);
+      expect(example.entries[0]).toEqual({ path: "note.md", kind: "file", hash: "<entry hash from preview>", mode: 420, status: "review" });
+      expect(example.resolutions[0]).toEqual({
+        path: "note.md",
+        sourceHash: "<entry hash from preview>",
+        disposition: "integrated",
+        reason: "Relevant facts are in the canonical note.",
+        evidence: { path: "notes/canonical.md", hash: "<canonical file SHA-256>" },
+      });
+    } finally {
+      repo.rm();
+    }
+  });
 });
