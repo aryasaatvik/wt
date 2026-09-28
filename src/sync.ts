@@ -130,7 +130,7 @@ async function ignoredByTarget(target: string, candidates: string[]): Promise<Se
   });
   p.stdin.write(candidates.join("\0") + "\0");
   await p.stdin.end();
-  const [stdout, stderr, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+  const [stdout, stderr, code] = await Promise.all([Bun.readableStreamToText(p.stdout), Bun.readableStreamToText(p.stderr), p.exited]);
   if (code !== 0 && code !== 1) throw new Error(`git check-ignore failed in ${target}:\n${stderr}`);
   return new Set(stdout.split("\0").filter(Boolean));
 }
@@ -149,7 +149,7 @@ export async function matchIgnorePatterns(paths: string[], patterns: string[]): 
     );
     p.stdin.write(paths.join("\0") + "\0");
     await p.stdin.end();
-    const [stdout, stderr, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+    const [stdout, stderr, code] = await Promise.all([Bun.readableStreamToText(p.stdout), Bun.readableStreamToText(p.stderr), p.exited]);
     if (code !== 0 && code !== 1) throw new Error(`failed to evaluate sync.exclude:\n${stderr}`);
     return new Set(stdout.split("\0").filter(Boolean));
   } finally {

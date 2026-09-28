@@ -82,7 +82,7 @@ export async function fetchPrs(
       { cwd: repoRoot, env: env as Record<string, string>, stdout: "pipe", stderr: "ignore" },
     );
     const timer = setTimeout(() => p.kill(), timeoutMs);
-    const [stdout, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+    const [stdout, code] = await Promise.all([Bun.readableStreamToText(p.stdout), p.exited]);
     clearTimeout(timer);
     if (code !== 0) return null;
     const prs = JSON.parse(stdout) as PrInfo[];
@@ -178,7 +178,7 @@ export async function prForCommit(
         { env: env as Record<string, string>, stdout: "pipe", stderr: "ignore" },
       );
       const timer = setTimeout(() => p.kill(), timeoutMs);
-      const [stdout, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+      const [stdout, code] = await Promise.all([Bun.readableStreamToText(p.stdout), p.exited]);
       clearTimeout(timer);
       if (code !== 0) {
         complete = false;

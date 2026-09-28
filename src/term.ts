@@ -36,8 +36,8 @@ export async function runAsync(
   try {
     const p = Bun.spawn(cmd, { cwd: opts?.cwd, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, code] = await Promise.all([
-      new Response(p.stdout).text(),
-      new Response(p.stderr).text(),
+      Bun.readableStreamToText(p.stdout),
+      Bun.readableStreamToText(p.stderr),
       p.exited,
     ]);
     return { ok: code === 0, stdout, stderr, code };
