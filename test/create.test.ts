@@ -331,6 +331,7 @@ describe("resolvePrimaryRepo", () => {
       const lane = await cmdNew("feat/submodule", "main", { ...OPTS, cwd: checkout });
       expect(lane).toBe(join(superproject.dir, "modules", "child-worktrees", "feat-submodule"));
       expect(superproject.gitIn(lane, "branch", "--show-current").trim()).toBe("feat/submodule");
+      expect(resolvePrimaryRepo(lane)).toBe(checkout);
     } finally {
       superproject.rm();
       submodule.rm();

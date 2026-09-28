@@ -1,13 +1,15 @@
 // Git plumbing shared by wt commands.
 
 import { realpathSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { run } from "./term.ts";
 
 /**
  * Resolve the primary repo root regardless of which worktree cwd is in.
  * --git-common-dir points at the primary .git for ordinary worktrees. An
- * initialized submodule instead keeps it under its superproject's .git/modules.
+ * initialized submodule keeps it under its superproject's .git/modules and
+ * names its checkout with core.worktree, which also covers linked worktrees
+ * of that submodule.
  *
  * The result is case-canonicalized via realpath: on case-insensitive
  * filesystems (macOS APFS) `pwd` preserves whatever casing the user typed in
@@ -18,17 +20,10 @@ import { run } from "./term.ts";
 export function resolvePrimaryRepo(cwd: string): string {
   const common = run(["git", "-C", cwd, "rev-parse", "--git-common-dir"]).trim();
   if (!common) throw new Error("not inside a git repository");
-  const superproject = run(["git", "-C", cwd, "rev-parse", "--show-superproject-working-tree"]).trim();
-  if (superproject) {
-    const gitDir = run(["git", "-C", cwd, "rev-parse", "--git-dir"]).trim();
-    if (!gitDir) throw new Error("cannot resolve git directory");
-    if (realpathSync.native(resolve(cwd, gitDir)) === realpathSync.native(resolve(cwd, common))) {
-      const top = run(["git", "-C", cwd, "rev-parse", "--show-toplevel"]).trim();
-      if (!top) throw new Error("cannot resolve submodule checkout root");
-      return realpathSync.native(top);
-    }
-  }
-  return realpathSync.native(dirname(resolve(cwd, common)));
+  const commonDir = resolve(cwd, common);
+  const worktree = run(["git", "config", "--file", join(commonDir, "config"), "core.worktree"]).trim();
+  if (worktree) return realpathSync.native(resolve(commonDir, worktree));
+  return realpathSync.native(dirname(commonDir));
 }
 
 export interface WorktreeInfo {
