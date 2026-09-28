@@ -31,6 +31,29 @@ interface PickerOptions {
   sizeMode?: SizeMode;
 }
 
+/**
+ * The picker's `x` action after confirmation: the same submodule and safety
+ * checks and removal as `wt rm`, reported as a one-line status.
+ */
+export async function removeLane(
+  slug: string,
+  path: string,
+  repoRoot: string,
+): Promise<{ removed: boolean; status: string }> {
+  const submodules = await inspectSubmodules(path);
+  if (!submodules.ok) return { removed: false, status: `skipped ${slug}: ${submodules.reason}` };
+  const safety = await runSafetyPipeline(path, repoRoot);
+  if (!safety.ok) {
+    const first = safety.flags[0]!;
+    const more = safety.flags.length > 1 ? ` (+${safety.flags.length - 1} more)` : "";
+    return { removed: false, status: `skipped ${slug}: [${first.kind}] ${first.detail}${more}` };
+  }
+  const rm = await removeWorktree(path, repoRoot, submodules.paths);
+  if (!rm.ok) return { removed: false, status: `failed: ${rm.reason.split("\n")[0] || "git worktree remove error"}` };
+  const retained = rm.retained ? ` · submodule Git data retained at ${rm.retained}` : "";
+  return { removed: true, status: `removed ${slug}${retained}` };
+}
+
 export async function runPicker(opts: PickerOptions): Promise<void> {
   // Imported lazily so table/JSON paths never pay for opentui.
   const { createCliRenderer, TextRenderable, ScrollBoxRenderable, StyledText, fg, bg, bold: b } =
@@ -185,26 +208,9 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     status = `checking ${r.slug}…`;
     paint();
     try {
-      const submodules = await inspectSubmodules(r.path);
-      if (!submodules.ok) {
-        status = `skipped ${r.slug}: ${submodules.reason}`;
-        return;
-      }
-      const safety = await runSafetyPipeline(r.path, repoRoot);
-      if (!safety.ok) {
-        const first = safety.flags[0]!;
-        const more = safety.flags.length > 1 ? ` (+${safety.flags.length - 1} more)` : "";
-        status = `skipped ${r.slug}: [${first.kind}] ${first.detail}${more}`;
-        return;
-      }
-      const rm = await removeWorktree(r.path, repoRoot, submodules.paths);
-      if (!rm.ok) {
-        status = `failed: ${rm.reason.split("\n")[0] || "git worktree remove error"}`;
-        return;
-      }
-      status = `removed ${r.slug}`;
-      await refresh();
-      return;
+      const result = await removeLane(r.slug, r.path, repoRoot);
+      status = result.status;
+      if (result.removed) await refresh();
     } catch (e) {
       // busy must never stay stuck — that would silently freeze every key
       status = `error: ${e instanceof Error ? e.message : e}`;
