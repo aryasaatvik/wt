@@ -145,9 +145,13 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
   mkdirSync(dirname(wtDir), { recursive: true });
 
   const existing = branchExists(repoRoot, branch);
+  const trackingFlag = opts.extraFlags.some((flag) =>
+    flag === "-t" || flag === "--track" || flag.startsWith("--track=") || flag === "--no-track"
+  );
+  const newBranchFlags = opts.extraFlags.map((flag) => flag === "-t" ? "--track" : flag);
   const addArgs = existing
     ? ["git", "-C", repoRoot, "worktree", "add", wtDir, branch, ...opts.extraFlags]
-    : ["git", "-C", repoRoot, "worktree", "add", "-b", branch, wtDir, base, ...opts.extraFlags];
+    : ["git", "-C", repoRoot, "worktree", "add", ...(trackingFlag ? [] : ["--no-track"]), "-b", branch, wtDir, base, ...newBranchFlags];
   info(
     existing
       ? `Checking out existing branch ${bold(branch)}`

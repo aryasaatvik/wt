@@ -68,6 +68,35 @@ describe("cmdNew", () => {
     }
   });
 
+  test("new branches do not track a remote base unless tracking is requested", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      repo.git("branch", "topic");
+      repo.git("push", "origin", "topic");
+      const upstream = (branch: string) => repo.git("for-each-ref", "--format=%(upstream)", `refs/heads/${branch}`).trim();
+
+      await cmdNew("feat/no-upstream", "origin/topic", { ...OPTS, cwd: repo.dir });
+      expect(upstream("feat/no-upstream")).toBe("");
+
+      await cmdNew("feat/track", "origin/topic", { ...OPTS, cwd: repo.dir, extraFlags: ["--track"] });
+      expect(upstream("feat/track")).toBe("refs/remotes/origin/topic");
+
+      await cmdNew("feat/short-track", "origin/topic", { ...OPTS, cwd: repo.dir, extraFlags: ["-t"] });
+      expect(upstream("feat/short-track")).toBe("refs/remotes/origin/topic");
+
+      await cmdNew("feat/explicit-no-track", "origin/topic", { ...OPTS, cwd: repo.dir, extraFlags: ["--no-track"] });
+      expect(upstream("feat/explicit-no-track")).toBe("");
+
+      repo.git("branch", "feat/existing-upstream", "main");
+      repo.git("branch", "--set-upstream-to=origin/main", "feat/existing-upstream");
+      await cmdNew("feat/existing-upstream", "origin/topic", { ...OPTS, cwd: repo.dir });
+      expect(upstream("feat/existing-upstream")).toBe("refs/remotes/origin/main");
+    } finally {
+      repo.rm();
+    }
+  });
+
   test("uses .worktreeinclude and records sync provenance", async () => {
     const repo = makeRepo();
     try {
@@ -290,6 +319,24 @@ describe("defaultBase", () => {
 });
 
 describe("resolvePrimaryRepo", () => {
+  test("resolves an initialized local submodule to its checkout", async () => {
+    const superproject = makeRepo();
+    const submodule = makeRepo();
+    try {
+      superproject.git("-c", "protocol.file.allow=always", "submodule", "add", submodule.dir, "modules/child");
+      const checkout = join(superproject.dir, "modules", "child");
+      mkdirSync(join(checkout, "nested"));
+      expect(resolvePrimaryRepo(checkout)).toBe(checkout);
+      expect(resolvePrimaryRepo(join(checkout, "nested"))).toBe(checkout);
+      const lane = await cmdNew("feat/submodule", "main", { ...OPTS, cwd: checkout });
+      expect(lane).toBe(join(superproject.dir, "modules", "child-worktrees", "feat-submodule"));
+      expect(superproject.gitIn(lane, "branch", "--show-current").trim()).toBe("feat/submodule");
+    } finally {
+      superproject.rm();
+      submodule.rm();
+    }
+  });
+
   test("resolves the primary root from inside a worktree", () => {
     const repo = makeRepo();
     try {
