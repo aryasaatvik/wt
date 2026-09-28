@@ -90,6 +90,36 @@ describe("wt reap", () => {
     }
   }, 30000);
 
+  test("removes a lane with clean submodules and skips a dirty one", async () => {
+    const module = makeRepo();
+    const repo = makeRepo();
+    try {
+      repo.git("-c", "protocol.file.allow=always", "submodule", "add", module.dir, "vendor/module");
+      repo.commit("add submodule");
+      repo.addOrigin();
+      const head = repo.git("rev-parse", "HEAD").trim();
+      const clean = repo.addWorktree("lane-clean-module", { detachAt: head });
+      repo.gitIn(clean, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive");
+      const dirty = repo.addWorktree("lane-dirty-module", { detachAt: head });
+      repo.gitIn(dirty, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive");
+      write(dirty, "vendor/module/untracked.txt", "keep\n");
+      const pr = conclusiveNoPrScan(repo);
+      const entries = await planReap({ all: false, cwd: repo.dir, scan: pr });
+      expect(dispositionOf(entries, "lane-clean-module").disposition).toBe("remove");
+      expect(dispositionOf(entries, "lane-dirty-module").disposition).toBe("skip");
+      expect(dispositionOf(entries, "lane-dirty-module").reasons.join(" ")).toContain("vendor/module");
+
+      const applied = await applyReap(entries, { env: pr.env });
+      expect(applied.removed.map((e) => e.record.slug)).toEqual(["lane-clean-module"]);
+      expect(existsSync(clean)).toBe(false);
+      expect(existsSync(join(dirty, "vendor/module/untracked.txt"))).toBe(true);
+      expect(repo.git("config", "--get", "submodule.vendor/module.url").trim()).toBe(module.dir);
+    } finally {
+      repo.rm();
+      module.rm();
+    }
+  }, 30000);
+
   test("apply skips a lane whose HEAD moved since the plan (TOCTOU)", async () => {
     const repo = makeRepo();
     try {
@@ -194,6 +224,59 @@ describe("wt reap", () => {
       expect(applied.removed).toEqual([]);
       expect(applied.skipped[0]?.reason).toBe("PR #42 opened since planning");
       expect(existsSync(lane)).toBe(true);
+    } finally {
+      repo.rm();
+    }
+  }, 30000);
+
+  test("merge-tree evidence survives planning and is rechecked before removal", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      const lane = repo.addWorktree("feat-merged", { branch: "feat/merged" });
+      write(lane, "feature.txt", "merged content\n");
+      repo.gitIn(lane, "add", "-A");
+      repo.gitIn(lane, "commit", "-m", "feature work");
+      repo.git("merge", "--squash", "feat/merged");
+      repo.git("commit", "-m", "squash feature");
+      const mergeOid = repo.git("rev-parse", "HEAD").trim();
+      repo.git("push", "origin", "main");
+      repo.write("feature.txt", "later main content\n");
+      const laterOid = repo.commit("edit after merge");
+      repo.git("push", "origin", "main");
+
+      repo.git("remote", "set-url", "origin", "https://github.com/acme/widgets.git");
+      const bin = join(repo.root, "bin");
+      mkdirSync(bin);
+      const gh = join(bin, "gh");
+      const oidFile = join(repo.root, "merge-oid");
+      writeFileSync(oidFile, mergeOid);
+      writeFileSync(gh, `#!/bin/sh
+if [ "$1" = "pr" ]; then
+  oid=$(cat "$WT_TEST_MERGE_OID_FILE")
+  printf '[{"headRefName":"feat/merged","state":"MERGED","number":42,"mergeCommit":{"oid":"%s"}}]\\n' "$oid"
+else
+  printf '42\\tmerged\\t%s\\n' "$(cat "$WT_TEST_MERGE_OID_FILE")"
+fi
+`);
+      chmodSync(gh, 0o755);
+      const env = { PATH: `${bin}:/usr/bin:/bin`, WT_TEST_MERGE_OID_FILE: oidFile };
+      const entries = await planReap({ all: false, cwd: repo.dir, scan: { env, sizeMode: "skip" } });
+      const planned = dispositionOf(entries, "feat-merged");
+      expect(planned.record.mergeCommit).toBe(mergeOid);
+      expect(planned.verdict).toEqual({ kind: "CONTENT_LANDED", ref: mergeOid, total: 1 });
+      expect(planned.disposition).toBe("remove");
+
+      writeFileSync(oidFile, laterOid);
+      const changed = await applyReap(entries, { env });
+      expect(changed.removed).toEqual([]);
+      expect(changed.skipped[0]?.reason).toBe("PR merge commit changed since planning");
+      expect(existsSync(lane)).toBe(true);
+
+      writeFileSync(oidFile, mergeOid);
+      const applied = await applyReap(entries, { env });
+      expect(applied.removed.map((e) => e.record.slug)).toEqual(["feat-merged"]);
+      expect(existsSync(lane)).toBe(false);
     } finally {
       repo.rm();
     }

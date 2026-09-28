@@ -48,6 +48,38 @@ test("unique binary evidence requires preservation or an explicit documented dis
   } finally { repo.rm(); }
 });
 
+test("review resolutions report the invalid field and expected evidence shape", async () => {
+  const { repo, lane } = fixture();
+  try {
+    writeFileSync(join(lane, ".scratchpad/note.md"), "lane facts");
+    repo.write(".scratchpad/canonical.md", "canonical facts");
+    const plan = await planScratchpadMigration(repo.dir, "lane");
+    plan.resolutions.push({
+      path: "note.md",
+      sourceHash: plan.entries[0]!.hash!,
+      disposition: "integrated",
+      reason: "The facts are in the canonical note.",
+      evidence: { path: "canonical.md", hash: hash("canonical facts") },
+    });
+
+    const cases = [
+      { name: "missing sourceHash", change: { sourceHash: undefined }, error: "resolution.sourceHash must match the preview entry hash" },
+      { name: "invalid sourceHash", change: { sourceHash: "wrong" }, error: "resolution.sourceHash must match the preview entry hash" },
+      { name: "unknown disposition", change: { disposition: "discarded" }, error: "resolution.disposition must be integrated, superseded, or preserved" },
+      { name: "missing reason", change: { reason: undefined }, error: "resolution.reason must be a non-empty string" },
+      { name: "blank reason", change: { reason: "  " }, error: "resolution.reason must be a non-empty string" },
+      { name: "missing evidence", change: { evidence: undefined }, error: "resolution.evidence must be { path: <canonical relative regular file>, hash: <SHA-256 hex> }" },
+      { name: "invalid evidence", change: { evidence: { path: "canonical.md", hash: "wrong" } }, error: "resolution.evidence must be { path: <canonical relative regular file>, hash: <SHA-256 hex> }" },
+    ];
+    for (const { name, change, error } of cases) {
+      const invalid = structuredClone(plan);
+      Object.assign(invalid.resolutions[0]!, change);
+      await expect(applyScratchpadMigration(repo.dir, "lane", invalid), name).rejects.toThrow(error);
+    }
+    expect(existsSync(join(lane, ".scratchpad/note.md"))).toBe(true);
+  } finally { repo.rm(); }
+});
+
 test("source edits, added files and changed canonical witnesses invalidate the reviewed plan", async () => {
   const { repo, lane } = fixture();
   try {

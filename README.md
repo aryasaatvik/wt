@@ -101,19 +101,32 @@ wt scratchpad feature-branch --json > /tmp/scratchpad-plan.json
 wt scratchpad feature-branch --apply /tmp/scratchpad-plan.json --json
 ```
 
-The preview fingerprints all files, directories, modes, and symlink text without following links. For each `review` entry, integrate its useful facts into the canonical document or preserve a needed artifact there. A resolution records the original entry hash, the disposition, the reason, and a canonical evidence file's SHA-256:
+The preview fingerprints all files, directories, modes, and symlink text without following links. For each `review` entry, integrate its useful facts into the canonical document or preserve a needed artifact there. Keep the preview's snapshot fields and entries unchanged, then add resolutions. A complete one-entry example is:
 
 ```json
 {
-  "path": "research/old-note.md",
-  "sourceHash": "<entry hash from preview>",
-  "disposition": "integrated",
-  "reason": "The unresolved finding now lives in the owning issue.",
-  "evidence": { "path": "backlog/issues/example.md", "hash": "<canonical file SHA-256>" }
+  "version": 1,
+  "primary": "/path/to/repo",
+  "worktree": "/path/to/repo-worktrees/lane",
+  "head": "<commit SHA from preview>",
+  "state": "legacy",
+  "sourceHash": "<snapshot hash from preview>",
+  "entries": [
+    { "path": "note.md", "kind": "file", "hash": "<entry hash from preview>", "mode": 420, "status": "review" }
+  ],
+  "resolutions": [
+    {
+      "path": "note.md",
+      "sourceHash": "<entry hash from preview>",
+      "disposition": "integrated",
+      "reason": "Relevant facts are in the canonical note.",
+      "evidence": { "path": "notes/canonical.md", "hash": "<canonical file SHA-256>" }
+    }
+  ]
 }
 ```
 
-Append decisions to the plan's `resolutions` array. Dispositions are `integrated`, `superseded`, or `preserved`. Preserved artifacts must match bytes and mode; symlinks require an explicit semantic decision because a relative target can change meaning after conversion. Directories are structural and do not require decisions. WT validates fingerprints, not the truth of prose: the reviewing agent owns semantic reconciliation. It never copies differing files into an archive automatically.
+Use the actual paths and hashes from the preview; `mode: 420` represents a regular file with mode `0644`. The evidence hash is the SHA-256 of a regular file inside the primary Scratchpad. `wt scratchpad --help` shows this plan shape. Dispositions are `integrated`, `superseded`, or `preserved`. Preserved artifacts must match bytes and mode; symlinks require an explicit semantic decision because a relative target can change meaning after conversion. Directories are structural and do not require decisions. WT validates fingerprints, not the truth of prose: the reviewing agent owns semantic reconciliation. It never copies differing files into an archive automatically.
 
 Apply rechecks Git identity, the entire source inventory, and canonical witnesses. It retains the original temporarily at `wt-scratchpad-original` in the worktree's private Git directory, establishes the link, rechecks, then disposes of the reviewed original. Failures retain recovery content and block `rm`/`reap`. Preview again and resume with a reviewed plan. A process crash can leave `wt-scratchpad-migration.lock` in that same directory; verify the migration process has stopped before removing that stale lock. Do not move or discard recovery content to bypass the checks. Conversion cannot prevent writes through already-open file descriptors, so writers must remain paused until it finishes.
 
@@ -125,10 +138,16 @@ Task evidence should use canonical paths and identify its source branch/SHA. Rel
 
 - a shared `.scratchpad` link must resolve to the primary's real directory; the check does not traverse shared content
 - an existing local Scratchpad, unexpected link, or unfinished migration blocks removal; use `wt scratchpad` to reconcile and convert it
-- env files (`.env`, `.env.*`, `.dev.vars` — never `*.example` or `*.sample`) block removal only when the lane holds a `KEY=value` the primary lacks (or a differing value). Primary-superset drift, comments, and ordering are lossless and do not block. Drift is reported as key **names** only; values are never printed. Reconcile with `wt sync` in the intended direction before rerunning
+- env files (`.env`, `.env.*`, `.dev.vars` — never `*.example` or `*.sample`) block removal only when the lane holds a `KEY=value` the primary lacks (or a differing value). Primary-superset drift, comments, ordering, and a simple value written with or without enclosing quotes are lossless and do not block. Drift is reported as key **names** only; values are never printed. Reconcile with `wt sync` in the intended direction before rerunning
 - dirty or status-unreadable worktrees block removal
+- `wt rm` refuses a worktree that contains the caller's current directory
+- initialized submodules must be clean (no changes, untracked, or ignored files); removal then runs `git submodule deinit --all`, restores the primary's submodule config that deinit clears, and retains the lane's submodule Git data under the primary's `.git/wt-submodules-*`
 
-`wt reap` distinguishes landed commits from `PUSHED_ONLY` feature work. An open or unknown PR state vetoes every automatic removal; `PUSHED_ONLY` requires a confirmed merged PR. Otherwise only `REACHABLE`, `REACHABLE_BRANCH`, `EMPTY`, and `CONTENT_LANDED` (squash-merge detection) can auto-remove.
+An exact path given to `wt rm` may name a worktree of another repository; branch and directory names resolve only in the current repository.
+
+`wt reap` distinguishes landed commits from `PUSHED_ONLY` feature work. An open or unknown PR state vetoes every automatic removal; `PUSHED_ONLY` requires a confirmed merged PR. Otherwise only `REACHABLE`, `REACHABLE_BRANCH`, `EMPTY`, and `CONTENT_LANDED` (squash-merge detection) can auto-remove. When the lane's PR merged and its merge commit is fetched and on the default branch, `CONTENT_LANDED` compares against that commit's tree instead of the current default branch, so a squash-merged stacked lane still lands after main later edits a lower layer's files. A path that main has returned to its pre-merge content counts as reverted and keeps the lane.
+
+Ahead/behind counts compare a lane with its own `origin/<branch>` when that ref exists, then its upstream, then the origin default.
 
 ### Worktree layout
 
@@ -142,6 +161,8 @@ Task evidence should use canonical paths and identify its source branch/SHA. Rel
 Branch slashes are converted to dashes for the directory name.
 
 When no base is passed, wt resolves `origin/HEAD`, then falls back to a local `main`, `master`, or `dev`. It fails with a recovery-oriented error when none exists instead of assuming `main`.
+
+New branches do not track their base, including `origin/<parent>` for a stacked lane. Git sets the lane's own upstream on its first `git push -u`. Pass `--track` (or `-t`) to `wt new` to explicitly track the base; `--no-track` is also forwarded. Checking out an existing branch leaves its upstream unchanged.
 
 Creation writes its current phase (`created`, `synced`, `installing`, `ready`, or `incomplete`) to `wt.json`. A failed dependency install exits nonzero and keeps the worktree for diagnosis, with the exact `cd … && ni` recovery command in both the terminal and marker. It never labels an incomplete worktree ready.
 

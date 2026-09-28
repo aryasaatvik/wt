@@ -74,7 +74,7 @@ async function originMainlineRefs(wtPath: string): Promise<Set<string>> {
   return refs;
 }
 
-export async function classifyWorktree(wtPath: string): Promise<Verdict> {
+export async function classifyWorktree(wtPath: string, mergeCommit?: string | null): Promise<Verdict> {
   const g = (...args: string[]) => runAsync(["git", "-C", wtPath, ...args]);
 
   const defaultBranch = originDefault(wtPath);
@@ -89,6 +89,17 @@ export async function classifyWorktree(wtPath: string): Promise<Verdict> {
     return { kind: "REACHABLE", ref: defRef };
   }
 
+  // A merged PR's merge commit is landing evidence only when it is present
+  // locally and on the default branch's history; otherwise compare against
+  // the default branch as before.
+  const mergedRef =
+    mergeCommit &&
+    /^[0-9a-f]{40,64}$/i.test(mergeCommit) &&
+    (await g("cat-file", "-e", `${mergeCommit}^{commit}`)).ok &&
+    (await g("merge-base", "--is-ancestor", mergeCommit, defRef)).ok
+      ? mergeCommit
+      : null;
+
   const containing = await g("branch", "-r", "--contains", head);
   const remoteBranches = containing.ok
     ? containing.stdout.split("\n").map((l) => l.trim()).filter((l) => l && !l.includes("->"))
@@ -97,24 +108,45 @@ export async function classifyWorktree(wtPath: string): Promise<Verdict> {
     const mainlines = await originMainlineRefs(wtPath);
     const landed = remoteBranches.find((b) => mainlines.has(b));
     if (landed) return { kind: "REACHABLE_BRANCH", ref: landed };
-    return { kind: "PUSHED_ONLY", ref: remoteBranches[0]! };
+    if (!mergedRef) return { kind: "PUSHED_ONLY", ref: remoteBranches[0]! };
   }
+  // Published commits stay PUSHED_ONLY unless the merge tree proves landing;
+  // a mismatch must not demote durable work to STRANDED.
+  const pushedOnly: Verdict | null =
+    remoteBranches.length > 0 ? { kind: "PUSHED_ONLY", ref: remoteBranches[0]! } : null;
 
   const mbRes = await g("merge-base", head, defRef);
   if (!mbRes.ok) return { kind: "NO_MERGE_BASE", ref: defRef };
   const mergeBase = mbRes.stdout.trim();
 
   // A failed diff must never read as EMPTY/CONTENT_LANDED — both auto-remove.
-  const filesRes = await g("diff", "--name-only", mergeBase, head);
+  const filesRes = await g("diff", "--name-only", "-z", mergeBase, head);
   if (!filesRes.ok) return { kind: "PROBE_FAILED", ref: defRef };
-  const files = filesRes.stdout.split("\n").filter(Boolean);
+  const files = filesRes.stdout.split("\0").filter(Boolean);
   if (files.length === 0) return { kind: "EMPTY", ref: defRef };
 
-  const differsRes = await g("diff", "--name-only", head, defRef, "--", ...files);
-  if (!differsRes.ok) return { kind: "PROBE_FAILED", ref: defRef };
-  const differing = differsRes.stdout.split("\n").filter(Boolean).length;
-  if (differing === 0) return { kind: "CONTENT_LANDED", ref: defRef, total: files.length };
-  return { kind: "STRANDED", ref: defRef, differing, total: files.length };
+  const compareRef = mergedRef ?? defRef;
+  const differsRes = await g("--literal-pathspecs", "diff", "--name-only", "-z", head, compareRef, "--", ...files);
+  if (!differsRes.ok) return { kind: "PROBE_FAILED", ref: compareRef };
+  const differing = differsRes.stdout.split("\0").filter(Boolean).length;
+  if (differing > 0) return pushedOnly ?? { kind: "STRANDED", ref: compareRef, differing, total: files.length };
+  if (!mergedRef) return { kind: "CONTENT_LANDED", ref: compareRef, total: files.length };
+
+  // The merge tree matches. Paths where the default branch has since moved
+  // must not have returned to their pre-merge content: that is a revert, and
+  // the lane's work is no longer on the default branch.
+  const movedRes = await g("--literal-pathspecs", "diff", "--name-only", "-z", head, defRef, "--", ...files);
+  if (!movedRes.ok) return { kind: "PROBE_FAILED", ref: defRef };
+  const moved = movedRes.stdout.split("\0").filter(Boolean);
+  if (moved.length > 0) {
+    const editedRes = await g("--literal-pathspecs", "diff", "--name-only", "-z", `${mergedRef}^1`, defRef, "--", ...moved);
+    if (!editedRes.ok) return { kind: "PROBE_FAILED", ref: defRef };
+    const edited = new Set(editedRes.stdout.split("\0").filter(Boolean));
+    if (moved.some((path) => !edited.has(path))) {
+      return pushedOnly ?? { kind: "STRANDED", ref: defRef, differing: moved.length, total: files.length };
+    }
+  }
+  return { kind: "CONTENT_LANDED", ref: mergedRef, total: files.length };
 }
 
 export function verdictLabel(v: Verdict, prState?: string, prNumber?: number | null): string {

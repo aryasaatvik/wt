@@ -55,7 +55,9 @@ Creates worktree at `../<repo>-worktrees/<slug>/` where slashes in the branch na
 
 Steps performed:
 
-1. `git worktree add -b <branch> <path> <base>`
+1. `git worktree add --no-track -b <branch> <path> <base>` — a new branch never tracks its base, so a
+   stacked lane from `origin/<parent>` does not compare against its parent; its first `git push -u`
+   sets its own upstream. Pass `--track` (or `-t`) to track the base deliberately.
 2. Link `.scratchpad` to the primary checkout (relative symlink; creation never replaces an existing local directory)
 3. Sync other gitignored config (env, editor/agent settings) via rsync — Scratchpad is excluded
 4. Run `ni` to install dependencies when a lockfile or `packageManager` field identifies the package manager
@@ -75,7 +77,9 @@ Runs `git worktree remove` and preserves the local branch. Pass `-D` or `--delet
 branch deletion is explicitly requested.
 
 The target resolves in order: exact branch name → worktree directory name under `<repo>-worktrees/`
-→ filesystem path. `wt rm` has no dry-run mode, so inspect the lane with `wt ls -v` or the safe set
+→ filesystem path. An exact path may name a worktree of another repository; branch and directory names
+resolve only in the current repository. `wt rm` refuses a target that contains the caller's current
+directory — run it from the primary checkout or another worktree. `wt rm` has no dry-run mode, so inspect the lane with `wt ls -v` or the safe set
 with `wt reap` before removal.
 
 Every removal runs the same fail-closed safety pipeline. It refuses dirty or status-unreadable
@@ -86,6 +90,11 @@ or unfinished migration (`wt-scratchpad-original` / `wt-scratchpad-migration.loc
 preview and convert first with `wt scratchpad`. `wt` evaluates the pipeline read-only first, and it
 never passes `--force` to Git.
 
+A lane with initialized submodules is removed only when every submodule checkout is clean (no
+changes, untracked, or ignored files); `wt rm` and `wt reap --apply` then run `git submodule deinit
+--all`, restore the primary's submodule config that deinit clears, and retain the lane's submodule Git
+data under the primary's `.git/wt-submodules-*`.
+
 ### Scratchpad
 
 ```bash
@@ -95,9 +104,10 @@ wt scratchpad x/my-feature --json > /tmp/scratchpad-plan.json
 wt scratchpad x/my-feature --apply /tmp/scratchpad-plan.json --json
 ```
 
-`--apply` rejects leftover `review` entries (`unreconciled Scratchpad entry`). Unique, modified, or
-symlink entries need a resolution (`integrated` / `superseded` / `preserved`) on the saved plan;
-identical files do not.
+`--apply` rejects leftover `review` entries (`unreconciled Scratchpad entry`) and names the failing
+resolution field. Unique, modified, or symlink entries need a resolution (`integrated` / `superseded`
+/ `preserved`) on the saved plan; identical files do not. `wt scratchpad --help` prints a complete
+plan example.
 
 New worktrees use a relative `.scratchpad` symlink to the primary. Notes are visible immediately
 across lanes; Scratchpad is excluded from `wt sync`, including explicit manifests and `--force`.
@@ -130,9 +140,11 @@ wt reap --all --older-than 14 # fleet sweep, only lanes idle >= 14 days
 ```
 
 Open or unknown PR state vetoes automatic removal. PUSHED_ONLY lanes require a confirmed merged PR;
-otherwise only REACHABLE / REACHABLE_BRANCH / EMPTY / CONTENT_LANDED lanes auto-remove. Apply is
-sequential and rechecks the exact HEAD, current PR state, and safety pipeline immediately before
-each removal; any change demotes the lane to SKIP. Branches remain available. Exit code 1 means
+otherwise only REACHABLE / REACHABLE_BRANCH / EMPTY / CONTENT_LANDED lanes auto-remove. For a lane
+whose PR merged, CONTENT_LANDED compares the lane's files with that PR's merge commit when it is
+fetched and on the default branch, so a squash-merged stacked lane lands even after main later edits
+a lower layer's files; a path main has reverted to its pre-merge content keeps the lane. Apply is sequential and rechecks the exact HEAD, current PR state, merge
+commit, verdict, and safety pipeline immediately before each removal; any change demotes the lane to SKIP. Branches remain available. Exit code 1 means
 something was skipped and needs a human.
 
 ## Options

@@ -1,12 +1,15 @@
 // Git plumbing shared by wt commands.
 
 import { realpathSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { run } from "./term.ts";
 
 /**
  * Resolve the primary repo root regardless of which worktree cwd is in.
- * --git-common-dir always points at the primary .git; its parent is the root.
+ * --git-common-dir points at the primary .git for ordinary worktrees. An
+ * initialized submodule keeps it under its superproject's .git/modules and
+ * names its checkout with core.worktree, which also covers linked worktrees
+ * of that submodule.
  *
  * The result is case-canonicalized via realpath: on case-insensitive
  * filesystems (macOS APFS) `pwd` preserves whatever casing the user typed in
@@ -17,7 +20,10 @@ import { run } from "./term.ts";
 export function resolvePrimaryRepo(cwd: string): string {
   const common = run(["git", "-C", cwd, "rev-parse", "--git-common-dir"]).trim();
   if (!common) throw new Error("not inside a git repository");
-  return realpathSync.native(dirname(resolve(cwd, common)));
+  const commonDir = resolve(cwd, common);
+  const worktree = run(["git", "config", "--file", join(commonDir, "config"), "core.worktree"]).trim();
+  if (worktree) return realpathSync.native(resolve(commonDir, worktree));
+  return realpathSync.native(dirname(commonDir));
 }
 
 export interface WorktreeInfo {

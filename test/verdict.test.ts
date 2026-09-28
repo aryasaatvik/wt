@@ -135,6 +135,123 @@ describe("classifyWorktree", () => {
     }
   });
 
+  test("STRANDED: an unlanded filename containing a newline remains distinct", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      const wt = repo.addWorktree("feat-newline", { branch: "feat/newline" });
+      await Bun.write(`${wt}/line1\nline2.txt`, "unmerged work\n");
+      repo.gitIn(wt, "add", "-A");
+      repo.gitIn(wt, "commit", "-m", "add newline-named file");
+      const v = await classifyWorktree(wt);
+      expect(v).toEqual({ kind: "STRANDED", ref: "origin/main", differing: 1, total: 1 });
+      expect(isRemovable(v.kind, "none")).toBe(false);
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("CONTENT_LANDED: merged stack uses its merge tree after main changes a lower file", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      const lower = repo.addWorktree("feat-lower", { branch: "feat/lower" });
+      await Bun.write(`${lower}/lower.txt`, "lower content\n");
+      repo.gitIn(lower, "add", "-A");
+      repo.gitIn(lower, "commit", "-m", "lower layer");
+      const lowerHead = repo.gitIn(lower, "rev-parse", "HEAD").trim();
+      repo.git("merge", "--squash", "feat/lower");
+      repo.git("commit", "-m", "squash lower");
+      repo.git("push", "origin", "main");
+
+      const upper = repo.addWorktree("feat-upper", { detachAt: lowerHead });
+      await Bun.write(`${upper}/upper.txt`, "upper content\n");
+      repo.gitIn(upper, "add", "-A");
+      repo.gitIn(upper, "commit", "-m", "upper layer");
+      repo.git("merge", "--squash", repo.gitIn(upper, "rev-parse", "HEAD").trim());
+      repo.git("commit", "-m", "squash upper");
+      const mergeCommit = repo.git("rev-parse", "HEAD").trim();
+      repo.git("push", "origin", "main");
+
+      repo.write("lower.txt", "later main content\n");
+      repo.commit("edit lower after upper merge");
+      repo.git("push", "origin", "main");
+
+      expect((await classifyWorktree(upper)).kind).toBe("STRANDED");
+      expect(await classifyWorktree(upper, mergeCommit)).toEqual({
+        kind: "CONTENT_LANDED", ref: mergeCommit, total: 2,
+      });
+      expect((await classifyWorktree(upper, repo.git("rev-parse", "HEAD").trim())).kind).toBe("STRANDED");
+      expect((await classifyWorktree(upper, "0".repeat(40))).kind).toBe("STRANDED");
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("CONTENT_LANDED: a published feature branch still checks its merged PR tree", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      const wt = repo.addWorktree("feat-published", { branch: "feat/published" });
+      await Bun.write(`${wt}/feature.txt`, "landed content\n");
+      repo.gitIn(wt, "add", "-A");
+      repo.gitIn(wt, "commit", "-m", "feature work");
+      repo.gitIn(wt, "push", "-u", "origin", "feat/published");
+      repo.git("merge", "--squash", "feat/published");
+      repo.git("commit", "-m", "squash feature");
+      const mergeCommit = repo.git("rev-parse", "HEAD").trim();
+      repo.git("push", "origin", "main");
+      expect((await classifyWorktree(wt)).kind).toBe("PUSHED_ONLY");
+      expect(await classifyWorktree(wt, mergeCommit)).toEqual({
+        kind: "CONTENT_LANDED", ref: mergeCommit, total: 1,
+      });
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("STRANDED: a merged PR later reverted on main is not landed", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      const wt = repo.addWorktree("feat-reverted", { branch: "feat/reverted" });
+      await Bun.write(`${wt}/feature.txt`, "feature\n");
+      repo.gitIn(wt, "add", "-A");
+      repo.gitIn(wt, "commit", "-m", "feature work");
+      repo.git("merge", "--squash", "feat/reverted");
+      repo.git("commit", "-m", "squash feature");
+      const mergeCommit = repo.git("rev-parse", "HEAD").trim();
+      repo.git("revert", "--no-edit", mergeCommit);
+      repo.git("push", "origin", "main");
+      expect(await classifyWorktree(wt, mergeCommit)).toEqual({
+        kind: "STRANDED", ref: "origin/main", differing: 1, total: 1,
+      });
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("PUSHED_ONLY: a merge tree that differs never demotes published work", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      const wt = repo.addWorktree("feat-later", { branch: "feat/later" });
+      await Bun.write(`${wt}/feature.txt`, "first\n");
+      repo.gitIn(wt, "add", "-A");
+      repo.gitIn(wt, "commit", "-m", "feature work");
+      repo.git("merge", "--squash", "feat/later");
+      repo.git("commit", "-m", "squash feature");
+      const mergeCommit = repo.git("rev-parse", "HEAD").trim();
+      repo.git("push", "origin", "main");
+      await Bun.write(`${wt}/feature.txt`, "second\n");
+      repo.gitIn(wt, "commit", "-am", "later work");
+      repo.gitIn(wt, "push", "-u", "origin", "feat/later");
+      expect(await classifyWorktree(wt, mergeCommit)).toEqual({ kind: "PUSHED_ONLY", ref: "origin/feat/later" });
+    } finally {
+      repo.rm();
+    }
+  });
+
   test("NO_REMOTE_REF: repo without origin", async () => {
     const repo = makeRepo();
     try {

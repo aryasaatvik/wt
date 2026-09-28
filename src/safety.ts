@@ -77,7 +77,9 @@ export function parseEnvAssignments(content: string): EnvAssignments {
       unparsed = true;
       continue;
     }
-    map.set(m[1]!, m[2]!.trim());
+    const value = m[2]!.trim();
+    const quoted = /^(?:"([^"\\$]*)"|'([^'\\$]*)')$/.exec(value);
+    map.set(m[1]!, quoted ? (quoted[1] ?? quoted[2]!) : value);
   }
   return { map, unparsed };
 }

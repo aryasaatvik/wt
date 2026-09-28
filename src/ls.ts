@@ -13,7 +13,7 @@ export type LsRecord = WorktreeStatus & { verdict?: string };
 export async function withVerdicts(records: WorktreeStatus[]): Promise<LsRecord[]> {
   return pool(records, 8, async (r) => {
     if (r.primary) return r as LsRecord;
-    const v = await classifyWorktree(r.path);
+    const v = await classifyWorktree(r.path, r.prState === "merged" ? r.mergeCommit : null);
     return { ...r, verdict: verdictLabel(v, r.prState, r.prNumber) };
   });
 }
