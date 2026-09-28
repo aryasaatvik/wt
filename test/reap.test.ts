@@ -198,4 +198,57 @@ describe("wt reap", () => {
       repo.rm();
     }
   }, 30000);
+
+  test("merge-tree evidence survives planning and is rechecked before removal", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      const lane = repo.addWorktree("feat-merged", { branch: "feat/merged" });
+      write(lane, "feature.txt", "merged content\n");
+      repo.gitIn(lane, "add", "-A");
+      repo.gitIn(lane, "commit", "-m", "feature work");
+      repo.git("merge", "--squash", "feat/merged");
+      repo.git("commit", "-m", "squash feature");
+      const mergeOid = repo.git("rev-parse", "HEAD").trim();
+      repo.git("push", "origin", "main");
+      repo.write("feature.txt", "later main content\n");
+      const laterOid = repo.commit("edit after merge");
+      repo.git("push", "origin", "main");
+
+      repo.git("remote", "set-url", "origin", "https://github.com/acme/widgets.git");
+      const bin = join(repo.root, "bin");
+      mkdirSync(bin);
+      const gh = join(bin, "gh");
+      const oidFile = join(repo.root, "merge-oid");
+      writeFileSync(oidFile, mergeOid);
+      writeFileSync(gh, `#!/bin/sh
+if [ "$1" = "pr" ]; then
+  oid=$(cat "$WT_TEST_MERGE_OID_FILE")
+  printf '[{"headRefName":"feat/merged","state":"MERGED","number":42,"mergeCommit":{"oid":"%s"}}]\\n' "$oid"
+else
+  printf ''
+fi
+`);
+      chmodSync(gh, 0o755);
+      const env = { PATH: `${bin}:/usr/bin:/bin`, WT_TEST_MERGE_OID_FILE: oidFile };
+      const entries = await planReap({ all: false, cwd: repo.dir, scan: { env, sizeMode: "skip" } });
+      const planned = dispositionOf(entries, "feat-merged");
+      expect(planned.record.mergeCommit).toBe(mergeOid);
+      expect(planned.verdict).toEqual({ kind: "CONTENT_LANDED", ref: mergeOid, total: 1 });
+      expect(planned.disposition).toBe("remove");
+
+      writeFileSync(oidFile, laterOid);
+      const changed = await applyReap(entries, { env });
+      expect(changed.removed).toEqual([]);
+      expect(changed.skipped[0]?.reason).toBe("PR merge commit changed since planning");
+      expect(existsSync(lane)).toBe(true);
+
+      writeFileSync(oidFile, mergeOid);
+      const applied = await applyReap(entries, { env });
+      expect(applied.removed.map((e) => e.record.slug)).toEqual(["feat-merged"]);
+      expect(existsSync(lane)).toBe(false);
+    } finally {
+      repo.rm();
+    }
+  }, 30000);
 });

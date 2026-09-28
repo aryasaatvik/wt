@@ -20,7 +20,7 @@ export interface WorktreeStatus {
   prunable: boolean;
   dirty: boolean;
   dirtyCount: number;
-  /** Ref ahead/behind is measured against: upstream if set, else origin default. */
+  /** Ref ahead/behind is measured against: own origin branch, upstream, or origin default. */
   compareRef: string | null;
   ahead: number | null;
   behind: number | null;
@@ -33,12 +33,14 @@ export interface WorktreeStatus {
   mtimeMs: number | null;
   prState: PrState;
   prNumber: number | null;
+  mergeCommit?: string | null;
 }
 
 export interface PrInfo {
   headRefName: string;
   state: string;
   number: number;
+  mergeCommit: string | null;
 }
 
 /** "cached" reuses a recent `du` result; "fresh" always remeasures; "skip" omits size. */
@@ -78,14 +80,16 @@ export async function fetchPrs(
   if (!Bun.which("gh", { PATH: env.PATH ?? "" })) return null;
   try {
     const p = Bun.spawn(
-      ["gh", "pr", "list", "--state", "all", "--limit", String(PR_LIST_LIMIT), "--json", "headRefName,state,number"],
+      ["gh", "pr", "list", "--state", "all", "--limit", String(PR_LIST_LIMIT), "--json", "headRefName,state,number,mergeCommit"],
       { cwd: repoRoot, env: env as Record<string, string>, stdout: "pipe", stderr: "ignore" },
     );
     const timer = setTimeout(() => p.kill(), timeoutMs);
     const [stdout, code] = await Promise.all([Bun.readableStreamToText(p.stdout), p.exited]);
     clearTimeout(timer);
     if (code !== 0) return null;
-    const prs = JSON.parse(stdout) as PrInfo[];
+    const prs = (JSON.parse(stdout) as Array<Omit<PrInfo, "mergeCommit"> & { mergeCommit?: { oid?: string } | null }>).map(
+      (pr) => ({ ...pr, mergeCommit: pr.mergeCommit?.oid ?? null }),
+    );
     return { prs, complete: prs.length < PR_LIST_LIMIT };
   } catch {
     return null;
@@ -96,18 +100,18 @@ export async function fetchPrs(
 export function prStateFor(
   branch: string | null,
   listing: PrListing | null,
-): { prState: PrState; prNumber: number | null } {
-  if (listing === null) return { prState: "unknown", prNumber: null };
-  if (!branch) return { prState: "none", prNumber: null };
+): { prState: PrState; prNumber: number | null; mergeCommit: string | null } {
+  if (listing === null) return { prState: "unknown", prNumber: null, mergeCommit: null };
+  if (!branch) return { prState: "none", prNumber: null, mergeCommit: null };
   const pr = listing.prs.find((p) => p.headRefName === branch);
   if (!pr) {
     // a miss in a truncated listing proves nothing — don't claim "no PR"
-    return { prState: listing.complete ? "none" : "unknown", prNumber: null };
+    return { prState: listing.complete ? "none" : "unknown", prNumber: null, mergeCommit: null };
   }
   const state = pr.state.toLowerCase();
   const prState: PrState =
     state === "open" || state === "merged" || state === "closed" ? state : "unknown";
-  return { prState, prNumber: pr.number };
+  return { prState, prNumber: pr.number, mergeCommit: prState === "merged" ? pr.mergeCommit : null };
 }
 
 const GITHUB_REMOTE = /github\.com[:/](.+?)(?:\.git)?$/;
@@ -139,9 +143,9 @@ export async function remoteRepos(cwd: string): Promise<RemoteRepo[]> {
 const PR_RANK: Record<string, number> = { open: 3, merged: 2, closed: 1 };
 
 export function pickPr(
-  candidates: Array<{ prState: PrState; prNumber: number }>,
-): { prState: PrState; prNumber: number | null } | null {
-  let best: { prState: PrState; prNumber: number } | null = null;
+  candidates: Array<{ prState: PrState; prNumber: number; mergeCommit: string | null }>,
+): { prState: PrState; prNumber: number; mergeCommit: string | null } | null {
+  let best: { prState: PrState; prNumber: number; mergeCommit: string | null } | null = null;
   for (const c of candidates) {
     if (!best || (PR_RANK[c.prState] ?? 0) > (PR_RANK[best.prState] ?? 0)) best = c;
   }
@@ -161,9 +165,9 @@ export async function prForCommit(
   sha: string,
   env: Record<string, string | undefined> = process.env,
   timeoutMs = 8000,
-): Promise<{ prState: PrState; prNumber: number | null } | null> {
+): Promise<{ prState: PrState; prNumber: number | null; mergeCommit: string | null } | null> {
   if (!Bun.which("gh", { PATH: env.PATH ?? "" })) return null;
-  const candidates: Array<{ prState: PrState; prNumber: number }> = [];
+  const candidates: Array<{ prState: PrState; prNumber: number; mergeCommit: string | null }> = [];
   let complete = true;
   for (const { nwo } of repos) {
     try {
@@ -173,7 +177,7 @@ export async function prForCommit(
           "api",
           `repos/${nwo}/commits/${sha}/pulls`,
           "--jq",
-          '.[] | [.number, (if .merged_at then "merged" else .state end)] | @tsv',
+          '.[] | [.number, (if .merged_at then "merged" else .state end), (.merge_commit_sha // "")] | @tsv',
         ],
         { env: env as Record<string, string>, stdout: "pipe", stderr: "ignore" },
       );
@@ -185,10 +189,10 @@ export async function prForCommit(
         continue;
       }
       for (const line of stdout.split("\n").filter(Boolean)) {
-        const [num, state] = line.split("\t");
+        const [num, state, mergeCommit] = line.split("\t");
         const prState = String(state).toLowerCase();
         if (prState !== "open" && prState !== "merged" && prState !== "closed") continue;
-        candidates.push({ prState, prNumber: Number(num) });
+        candidates.push({ prState, prNumber: Number(num), mergeCommit: prState === "merged" ? mergeCommit || null : null });
       }
     } catch {
       complete = false;
@@ -196,8 +200,8 @@ export async function prForCommit(
   }
   const best = pickPr(candidates);
   if (best?.prState === "open") return best;
-  if (!complete) return { prState: "unknown", prNumber: null };
-  return best ?? { prState: "none", prNumber: null };
+  if (!complete) return { prState: "unknown", prNumber: null, mergeCommit: null };
+  return best ?? { prState: "none", prNumber: null, mergeCommit: null };
 }
 
 async function probe(
@@ -205,7 +209,7 @@ async function probe(
   repoRoot: string,
   defaultBranch: string | null,
   disk: { usage: WorktreeDiskUsage; cached: boolean } | null,
-): Promise<Omit<WorktreeStatus, "prState" | "prNumber">> {
+): Promise<Omit<WorktreeStatus, "prState" | "prNumber" | "mergeCommit">> {
   const g = (...args: string[]) => runAsync(["git", "-C", wt.path, ...args]);
 
   const [status, upstreamRes, lastCommitRes] = await Promise.all([
@@ -215,7 +219,9 @@ async function probe(
   ]);
 
   const upstream = upstreamRes.ok ? upstreamRes.stdout.trim() : null;
-  const compareRef = upstream ?? (defaultBranch ? `origin/${defaultBranch}` : null);
+  const ownOrigin = wt.branch ? `refs/remotes/origin/${wt.branch}` : null;
+  const ownOriginRes = ownOrigin ? await g("show-ref", "--verify", "--quiet", ownOrigin) : null;
+  const compareRef = ownOriginRes?.ok ? `origin/${wt.branch}` : upstream ?? (defaultBranch ? `origin/${defaultBranch}` : null);
 
   let ahead: number | null = null;
   let behind: number | null = null;
@@ -285,6 +291,7 @@ export async function scanWorktrees(cwd: string, opts: ScanOptions = {}): Promis
   return pool(records, opts.concurrency ?? 10, async (r) => {
     if (r.primary || r.prState === "open") return r;
     const resolved = await prForCommit(repos, r.head, opts.env ?? process.env);
+    if (resolved?.prState === "none" && (r.prState === "merged" || r.prState === "closed")) return r;
     return resolved ? { ...r, ...resolved } : r;
   });
 }

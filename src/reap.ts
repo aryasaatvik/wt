@@ -10,7 +10,7 @@ import { basename, dirname, join } from "node:path";
 import { discoverPrimaries, humanSize } from "./ls.ts";
 import { resolvePrimaryRepo } from "./git.ts";
 import { runSafetyPipeline, type SafetyResult } from "./safety.ts";
-import { prForCommit, remoteRepos, scanWorktrees, type ScanOptions, type WorktreeStatus } from "./scan.ts";
+import { fetchPrs, prForCommit, prStateFor, remoteRepos, scanWorktrees, type ScanOptions, type WorktreeStatus } from "./scan.ts";
 import { bold, dim, gray, green, pool, red, runAsync, yellow } from "./term.ts";
 import { err, ExitError } from "./ui.ts";
 import { classifyWorktree, isRemovable, verdictLabel, type Verdict } from "./verdict.ts";
@@ -56,7 +56,7 @@ async function planRepo(repoRoot: string, opts: ReapOptions): Promise<ReapEntry[
           reasons: ["prunable (directory missing — use git worktree prune)"],
         };
       }
-      const verdict = await classifyWorktree(record.path);
+      const verdict = await classifyWorktree(record.path, record.prState === "merged" ? record.mergeCommit : null);
       const verdictText = verdictLabel(verdict, record.prState, record.prNumber);
       if (!isRemovable(verdict.kind, record.prState)) {
         const reason =
@@ -142,6 +142,7 @@ export async function applyReap(entries: ReapEntry[], opts: ApplyOptions = {}): 
   const removed: ReapEntry[] = [];
   const skipped: ApplyResult["skipped"] = [];
   const reposByRoot = new Map<string, Awaited<ReturnType<typeof remoteRepos>>>();
+  const prsByRoot = new Map<string, Awaited<ReturnType<typeof fetchPrs>>>();
   for (const entry of entries) {
     if (entry.disposition !== "remove") continue;
     const { record, repoRoot } = entry;
@@ -159,10 +160,17 @@ export async function applyReap(entries: ReapEntry[], opts: ApplyOptions = {}): 
       repos = await remoteRepos(repoRoot);
       reposByRoot.set(repoRoot, repos);
     }
-    const latestPr =
+    if (!prsByRoot.has(repoRoot)) prsByRoot.set(repoRoot, await fetchPrs(repoRoot, opts.env ?? process.env));
+    const branchPr = prStateFor(record.branch, prsByRoot.get(repoRoot) ?? null);
+    const commitPr =
       repos.length > 0
         ? await prForCommit(repos, record.head, opts.env ?? process.env)
-        : { prState: "unknown" as const, prNumber: null };
+        : { prState: "unknown" as const, prNumber: null, mergeCommit: null };
+    const latestPr = branchPr.prState === "open"
+      ? branchPr
+      : commitPr?.prState === "none" && (branchPr.prState === "merged" || branchPr.prState === "closed")
+        ? branchPr
+        : commitPr;
     const latestPrState = latestPr?.prState ?? "unknown";
     if (!entry.verdict || !isRemovable(entry.verdict.kind, latestPrState)) {
       const reason =
@@ -170,6 +178,18 @@ export async function applyReap(entries: ReapEntry[], opts: ApplyOptions = {}): 
           ? `PR #${latestPr?.prNumber} opened since planning`
           : `PR state became ${latestPrState} since planning`;
       skipped.push({ entry, reason });
+      continue;
+    }
+    if (record.prState === "merged" && record.mergeCommit && latestPr?.mergeCommit !== record.mergeCommit) {
+      skipped.push({ entry, reason: "PR merge commit changed since planning" });
+      continue;
+    }
+    const verdictNow = await classifyWorktree(
+      record.path,
+      latestPrState === "merged" ? latestPr?.mergeCommit : null,
+    );
+    if (verdictNow.kind !== entry.verdict.kind || verdictNow.ref !== entry.verdict.ref || !isRemovable(verdictNow.kind, latestPrState)) {
+      skipped.push({ entry, reason: "landing verdict changed since planning" });
       continue;
     }
     // Re-evaluate read-only first: if something changed since the plan
