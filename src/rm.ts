@@ -235,19 +235,8 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
     err(`Not removing ${bold(target)}: ${submodules.reason}`);
     throw new ExitError(1);
   }
-  // Evaluate read-only first: when removal is blocked, nothing has been
-  // copied into the archive. Only a clean preview runs the salvaging pass.
-  const preview = await runSafetyPipeline(wt.path, repoRoot, { dryRun: true });
-  if (!preview.ok) {
-    printBlocked(target, preview.flags, wt.branch ?? wt.path);
-    throw new ExitError(1);
-  }
   const safety = await runSafetyPipeline(wt.path, repoRoot);
-  for (const rel of safety.salvaged) {
-    log(`Salvaged ${dim(rel)} to primary .scratchpad archive`);
-  }
   if (!safety.ok) {
-    // something changed between the preview and the salvaging pass
     printBlocked(target, safety.flags, wt.branch ?? wt.path);
     throw new ExitError(1);
   }

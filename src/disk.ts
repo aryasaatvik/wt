@@ -18,7 +18,7 @@ export interface WorktreeDiskReport {
   usage: WorktreeDiskUsage | null;
 }
 
-export type DiskMode = "cached" | "fresh";
+type DiskMode = "cached" | "fresh";
 
 interface RepoMetadata {
   gitDir: string;
@@ -133,7 +133,7 @@ function writeCache(path: string | null, usage: WorktreeDiskUsage): void {
   } catch { /* cache is best-effort */ }
 }
 
-export interface MeasureOptions {
+interface MeasureOptions {
   /**
    * Restrict checkout measurement to these worktree paths. Shared storage
    * still reflects the whole repository, and its accounting still sizes each

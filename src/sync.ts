@@ -364,10 +364,6 @@ export async function planSync(source: string, target: string, options: PlanSync
   };
 }
 
-export async function computeSyncFiles(repoRoot: string, wtDir: string): Promise<string[]> {
-  return (await planSync(repoRoot, wtDir)).actions.filter((action) => action.status === "copy").map((action) => action.path);
-}
-
 type CopyKind = "rsync" | "symlink" | "skip";
 
 export function classifyCopy(repoRoot: string, rel: string): CopyKind {
