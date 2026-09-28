@@ -134,7 +134,10 @@ fi
       const branchOnly = await scanWorktrees(repo.dir, {
         env: { ...env, WT_TEST_REST_OID: "none" }, sizeMode: "skip",
       });
-      expect(branchOnly.find((r) => r.slug === "feat-merged")?.mergeCommit).toBe(branchOid);
+      // an older merged PR on the branch never vouches for a HEAD no PR contains
+      const unmatched = branchOnly.find((r) => r.slug === "feat-merged");
+      expect(unmatched?.prState).toBe("none");
+      expect(unmatched?.mergeCommit).toBeNull();
       const resolved = await scanWorktrees(repo.dir, { env, sizeMode: "skip" });
       const merged = resolved.find((r) => r.slug === "feat-merged");
       expect(merged?.prState).toBe("merged");

@@ -291,7 +291,6 @@ export async function scanWorktrees(cwd: string, opts: ScanOptions = {}): Promis
   return pool(records, opts.concurrency ?? 10, async (r) => {
     if (r.primary || r.prState === "open") return r;
     const resolved = await prForCommit(repos, r.head, opts.env ?? process.env);
-    if (resolved?.prState === "none" && (r.prState === "merged" || r.prState === "closed")) return r;
     return resolved ? { ...r, ...resolved } : r;
   });
 }

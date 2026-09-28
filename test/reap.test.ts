@@ -256,7 +256,7 @@ if [ "$1" = "pr" ]; then
   oid=$(cat "$WT_TEST_MERGE_OID_FILE")
   printf '[{"headRefName":"feat/merged","state":"MERGED","number":42,"mergeCommit":{"oid":"%s"}}]\\n' "$oid"
 else
-  printf ''
+  printf '42\\tmerged\\t%s\\n' "$(cat "$WT_TEST_MERGE_OID_FILE")"
 fi
 `);
       chmodSync(gh, 0o755);

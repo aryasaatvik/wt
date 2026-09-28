@@ -171,11 +171,10 @@ export async function applyReap(entries: ReapEntry[], opts: ApplyOptions = {}): 
       repos.length > 0
         ? await prForCommit(repos, record.head, opts.env ?? process.env)
         : { prState: "unknown" as const, prNumber: null, mergeCommit: null };
-    const latestPr = branchPr.prState === "open"
-      ? branchPr
-      : commitPr?.prState === "none" && (branchPr.prState === "merged" || branchPr.prState === "closed")
-        ? branchPr
-        : commitPr;
+    // An open PR on the branch vetoes removal; otherwise only a PR that
+    // contains HEAD is evidence, so an older merged PR on the same branch
+    // cannot vouch for commits published after it merged.
+    const latestPr = branchPr.prState === "open" ? branchPr : commitPr;
     const latestPrState = latestPr?.prState ?? "unknown";
     if (!entry.verdict || !isRemovable(entry.verdict.kind, latestPrState)) {
       const reason =
