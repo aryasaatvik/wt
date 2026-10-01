@@ -48,6 +48,29 @@ test("unique binary evidence requires preservation or an explicit documented dis
   } finally { repo.rm(); }
 });
 
+test("conversion uses evidence under a symlinked primary root without following nested links", async () => {
+  const { repo, lane } = fixture();
+  try {
+    const storage = join(repo.root, "xdg-notes");
+    mkdirSync(storage);
+    symlinkSync(storage, join(repo.dir, ".scratchpad"));
+    writeFileSync(join(storage, "same.md"), "same");
+    writeFileSync(join(lane, ".scratchpad/same.md"), "same");
+    writeFileSync(join(lane, ".scratchpad/unique.md"), "unique");
+    const plan = await planScratchpadMigration(repo.dir, "lane");
+    expect(plan.entries.find((entry) => entry.path === "same.md")!.status).toBe("identical");
+    writeFileSync(join(storage, "preserved.md"), "unique");
+    symlinkSync("preserved.md", join(storage, "alias.md"));
+    const decision = { path: "unique.md", sourceHash: hash("unique"), disposition: "preserved" as const, reason: "retain unique note", evidence: { path: "alias.md", hash: hash("unique") } };
+    plan.resolutions.push(decision);
+    await expect(applyScratchpadMigration(repo.dir, "lane", plan)).rejects.toThrow("canonical evidence");
+    decision.evidence.path = "preserved.md";
+    await applyScratchpadMigration(repo.dir, "lane", plan);
+    expect((await runSafetyPipeline(lane, repo.dir)).ok).toBe(true);
+    expect(readFileSync(join(lane, ".scratchpad/preserved.md"), "utf8")).toBe("unique");
+  } finally { repo.rm(); }
+});
+
 test("review resolutions report the invalid field and expected evidence shape", async () => {
   const { repo, lane } = fixture();
   try {

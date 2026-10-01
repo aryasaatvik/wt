@@ -1,4 +1,4 @@
-import { appendFileSync, lstatSync, mkdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
+import { appendFileSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { runAsync } from "./term.ts";
 
@@ -18,8 +18,16 @@ export function statIfPresent(path: string) {
 export function scratchpadState(primary: string, worktree: string): ScratchpadState {
   const target = join(primary, ".scratchpad");
   const canonical = statIfPresent(target);
-  if (canonical && (!canonical.isDirectory() || canonical.isSymbolicLink())) {
-    return { kind: "invalid", reason: "primary .scratchpad must be a real directory" };
+  if (canonical) {
+    try {
+      if (!statSync(target).isDirectory()) {
+        return { kind: "invalid", reason: "primary .scratchpad must resolve to a directory" };
+      }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "ELOOP") throw error;
+      return { kind: "invalid", reason: "primary .scratchpad must resolve to a directory" };
+    }
   }
   const path = join(worktree, ".scratchpad");
   const local = statIfPresent(path);
