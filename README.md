@@ -86,9 +86,9 @@ Nested initialized submodules are inspected through their Git dir and common dir
 
 ### Shared Scratchpad
 
-New worktrees use a relative `.scratchpad` symlink to the primary checkout. Notes and evidence are visible immediately across lanes; assign one writer per file and record branch/SHA for unmerged work. The primary directory must be untracked and real. WT adds a machine-local Git exclude for the link without editing tracked ignore rules.
+New worktrees use a relative `.scratchpad` symlink to the primary checkout. Notes and evidence are visible immediately across lanes; assign one writer per file and record branch/SHA for unmerged work. The primary `.scratchpad` must be untracked and resolve to a directory; it may itself be a symlink to external canonical storage such as XDG. WT adds a machine-local Git exclude for the link without editing tracked ignore rules.
 
-Scratchpad is excluded from `wt sync`, including explicit manifests and forced sync. Existing local directories require reconciliation before conversion; creation never replaces them. Shared-link removal checks the target without walking its contents or creating an archive. Broken or foreign links block removal. Disk accounting counts linked storage in the primary checkout only.
+Scratchpad is excluded from `wt sync`, including explicit manifests and forced sync. Existing local directories require reconciliation before conversion; creation never replaces them. Shared-link removal checks the target without walking its contents or creating an archive. Broken or foreign links block removal. Disk accounting does not traverse symlinks: a real primary Scratchpad counts toward the primary checkout, while external canonical storage is outside checkout totals.
 
 ### Convert existing Scratchpads
 
@@ -136,7 +136,7 @@ Task evidence should use canonical paths and identify its source branch/SHA. Rel
 
 `wt rm` and `wt reap` never pass `--force` to git. Before any removal:
 
-- a shared `.scratchpad` link must resolve to the primary's real directory; the check does not traverse shared content
+- a shared `.scratchpad` link must resolve to the same directory as the primary's `.scratchpad`; the check does not traverse shared content
 - an existing local Scratchpad, unexpected link, or unfinished migration blocks removal; use `wt scratchpad` to reconcile and convert it
 - env files (`.env`, `.env.*`, `.dev.vars` — never `*.example` or `*.sample`) block removal only when the lane holds a `KEY=value` the primary lacks (or a differing value). Primary-superset drift, comments, ordering, and a simple value written with or without enclosing quotes are lossless and do not block. Drift is reported as key **names** only; values are never printed. Reconcile with `wt sync` in the intended direction before rerunning
 - dirty or status-unreadable worktrees block removal

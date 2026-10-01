@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { resolvePrimaryRepo } from "./git.ts";
 import { resolveTarget } from "./rm.ts";
@@ -60,9 +60,10 @@ function regularEvidence(root: string, path: string): { hash: string; mode: numb
   if (!path || isAbsolute(path) || path.split(/[\\/]/).some((p) => p === ".." || p === "." || p === "")) {
     throw new Error(`invalid canonical evidence path: ${path}`);
   }
-  let current = root;
   if (!statIfPresent(root)) return null;
-  if (!lstatSync(root).isDirectory() || lstatSync(root).isSymbolicLink()) throw new Error("canonical Scratchpad is not a real directory");
+  // The root may point to external canonical storage; links within it are not evidence.
+  let current = realpathSync(root);
+  if (!lstatSync(current).isDirectory()) throw new Error("canonical Scratchpad does not resolve to a directory");
   const parts = path.split(sep);
   for (let i = 0; i < parts.length; i++) {
     current = join(current, parts[i]!);
