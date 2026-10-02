@@ -12,6 +12,7 @@ _wt() {
     'ls:List all worktrees'
     'list:List all worktrees'
     'du:Show owned disk usage'
+    'reap:Report reapable worktrees (dry run by default)'
   )
 
   _arguments -C \
@@ -64,6 +65,13 @@ _wt() {
             '--json[Print machine-readable breakdown]' \
             '--fresh[Remeasure instead of using cache]' \
             '*:worktree:_wt_worktree_targets'
+          return
+          ;;
+        reap)
+          _arguments \
+            '--apply[Remove them (branches are kept)]' \
+            '--all[Sweep every repo under ~/Developer]' \
+            '--older-than[Only lanes with older last commits]:days:'
           return
           ;;
       esac

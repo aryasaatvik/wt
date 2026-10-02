@@ -1,12 +1,12 @@
 ---
 name: wt
-description: "Git worktree helper that creates worktrees with gitignored file sync and dependency install. Use when: (1) Creating new worktrees for parallel development, (2) Managing worktree lifecycle (create, remove, list), (3) Troubleshooting worktree-related issues (hook failures, file sync). Located at ~/Developer/wt."
+description: "Git worktree helper that creates worktrees with gitignored file sync, dependency install, and the repository wt.toml post-install command. Use when: (1) Creating new worktrees for parallel development, (2) Managing worktree lifecycle (create, remove, list), (3) Troubleshooting worktree-related issues (hook failures, file sync). Located at ~/Developer/wt."
 disable-model-invocation: true
 ---
 
 # wt - Git Worktree Helper
 
-Quickly spin up git worktrees with a shared Scratchpad, selected ignored files synced, and dependencies installed.
+Quickly spin up git worktrees with a shared Scratchpad, selected ignored files synced, dependencies installed, and the repository's `wt.toml` post-install command.
 
 ## When to use
 
@@ -23,6 +23,7 @@ Requires: `git`, `rsync`, [`ni`](https://github.com/antfu/ni).
 Worktree task?
 ├─ New feature branch     → wt new x/my-feature
 ├─ Branch off non-main    → wt new x/my-feature develop
+├─ Skip repo post-install → wt new x/my-feature --no-post-install
 ├─ Done with branch       → wt rm x/my-feature
 ├─ See worktree status    → wt ls  (always inline; bare `wt` is a TTY picker — never use it)
 ├─ Preview ignored sync   → wt sync --dry-run --json
@@ -47,8 +48,11 @@ wt create x/my-feature
 # From a specific base branch
 wt new x/my-feature develop
 
-# Skip dependency install
+# Skip dependency install (also skips post-install)
 wt new x/my-feature --no-install
+
+# Skip the repository post-install command
+wt new x/my-feature --no-post-install
 ```
 
 Creates worktree at `../<repo>-worktrees/<slug>/` where slashes in the branch name become dashes (e.g., `x/my-feature` → `x-my-feature`).
@@ -61,8 +65,16 @@ Steps performed:
 2. Link `.scratchpad` to the primary checkout (relative symlink; creation never replaces an existing local directory)
 3. Sync other gitignored config (env, editor/agent settings) via rsync — Scratchpad is excluded
 4. Run `ni` to install dependencies when a lockfile or `packageManager` field identifies the package manager
+5. Run `wt.toml` `[create].postInstall` with `sh -c` from the worktree root after `ni`, when that command is set and install ran
 
-If install fails, wt exits nonzero but keeps the worktree. Read its `wt.json` phase/failure/recovery command or run the printed `cd <worktree> && ni`; an incomplete lane is never reported ready.
+The hook is repository policy, read from the primary checkout like `.worktreeinclude`:
+
+```toml
+[create]
+postInstall = "bun run build"
+```
+
+`--no-post-install` skips it; `--no-install` skips it too, because dependencies were not installed. If install or post-install fails, wt exits nonzero but keeps the worktree and records `phase: incomplete` in `wt.json` with a recovery command (`cd <worktree> && ni`, or `cd <worktree> && <command>`). The marker phase is `post-install` while the hook runs. An incomplete lane is never reported ready.
 
 ### Remove
 
@@ -149,11 +161,12 @@ something was skipped and needs a human.
 
 ## Options
 
-| Flag           | Description                               |
-| -------------- | ----------------------------------------- |
-| `--verbose`    | Show detailed rsync file list during sync |
-| `--no-install` | Skip dependency install                   |
-| `-h`, `--help` | Show help                                 |
+| Flag                | Description                                |
+| ------------------- | ------------------------------------------ |
+| `--verbose`         | Show detailed rsync file list during sync |
+| `--no-install`      | Skip dependency install                    |
+| `--no-post-install` | Skip the wt.toml post-install command      |
+| `-h`, `--help`      | Show help                                  |
 
 ### Sync
 
