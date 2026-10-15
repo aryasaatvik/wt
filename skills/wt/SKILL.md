@@ -42,7 +42,7 @@ Worktree task?
 wt x/my-feature
 
 # Explicit create
-wt new x/my-feature # origin/HEAD, then local main/master/dev
+wt new x/my-feature # local branch, same-name origin ref, then default base
 wt create x/my-feature
 
 # From a specific base branch
@@ -57,9 +57,11 @@ wt new x/my-feature --no-post-install
 
 Creates worktree at `../<repo>-worktrees/<slug>/` where slashes in the branch name become dashes (e.g., `x/my-feature` → `x-my-feature`).
 
+An existing local branch wins, followed by a cached same-name `origin/<branch>` ref, even when a base is supplied. Only a genuinely new branch uses the supplied base or defaults to `origin/HEAD`, local `main`/`master`/`dev`, then cached origin `main`/`master`/`dev`. No fetch runs. The terminal prints the selected ref/SHA and the private Git directory's `wt.json` records `source: { kind, ref, head }`; read that marker to verify which source setup used. Primary discovery uses the primary's configuration, including `config.worktree`, and refuses missing or foreign checkout identity.
+
 Steps performed:
 
-1. `git worktree add --no-track -b <branch> <path> <base>` — a new branch never tracks its base, so a
+1. Check out an existing local branch, or `git worktree add --no-track -b <branch> <path> <source>` — by default a new local branch never tracks its source, so a
    stacked lane from `origin/<parent>` does not compare against its parent; its first `git push -u`
    sets its own upstream. Pass `--track` (or `-t`) to track the base deliberately.
 2. Link `.scratchpad` to the primary checkout (relative symlink; creation never replaces an existing local directory)
@@ -95,12 +97,17 @@ directory — run it from the primary checkout or another worktree. `wt rm` has 
 with `wt reap` before removal.
 
 Every removal runs the same fail-closed safety pipeline. It refuses dirty or status-unreadable
-worktrees and env files that drifted from the primary (reporting key names, never values). A shared
-`.scratchpad` link must resolve to the primary's real directory; the check validates that identity
+worktrees and local env files that drifted from the primary (reporting key names, never values).
+Committed env is covered by Git history and dirty checks. A shared `.scratchpad` link must resolve
+to the primary's real directory; the check validates that identity
 without walking notes or creating an archive. A local Scratchpad directory, broken or foreign link,
 or unfinished migration (`wt-scratchpad-original` / `wt-scratchpad-migration.lock`) blocks removal —
 preview and convert first with `wt scratchpad`. `wt` evaluates the pipeline read-only first, and it
 never passes `--force` to Git.
+
+Existing tracked env marked `assume-unchanged` or `skip-worktree` must match its saved Git blob; hidden local edits or unreadable saved state block removal. Omitted skip-worktree paths may pass when their saved blob remains inspectable. The check handles content normalization and effective `core.symlinks=false` emulated links (raw target bytes) without changing the index or its flags.
+
+Generated env under known artifact directories follows the legacy sync exclusions below. Explicit manifest selections remain protected, including selections introduced after creation; recorded manifest selections and older markers without a known sync mode retain their env evidence. Unique source env created after setup still blocks removal even if the marker copied nothing.
 
 A lane with initialized submodules is removed only when every submodule checkout is clean (no
 changes, untracked, or ignored files); `wt rm` and `wt reap --apply` then run `git submodule deinit
@@ -186,6 +193,8 @@ The sync step uses `.worktreeinclude` as repository policy. Without one, wt 2.x 
 - **Env**: `.env`, `.env.*`, `.dev.vars` (never `*.example`)
 - **Editor**: `.vscode/`, `.idea/`, `.zed/`
 - **Agent**: `.claude/` except `.claude/worktrees`
+
+Legacy sync and default removal checks skip paths beneath `node_modules`, `.next`, `.turbo`, `dist`, `.cache`, `build`, `.build`, `Pods`, and `DerivedData`. This includes generated `.dev.vars`; source `.dev.vars` elsewhere, including under `.alchemy` and `.wrangler`, still syncs and is protected. A repository can deliberately select these paths with `.worktreeinclude`, which preserves their removal protection.
 
 Set `sync.requireInclude = true` under `[sync]` in `~/.config/wt/config.toml` to disable the fallback. `sync.exclude` is an array of subtractive Git-style patterns. Hard exclusions only protect `.git`, `.claude/worktrees`, and `.conductor`. Scratchpad is always filtered out of sync, including fallback and `--force`. There is no separate `.worktreeignore`; use ordered `!` rules in the manifest and user config for machine-specific exclusions.
 

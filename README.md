@@ -138,7 +138,9 @@ Task evidence should use canonical paths and identify its source branch/SHA. Rel
 
 - a shared `.scratchpad` link must resolve to the same directory as the primary's `.scratchpad`; the check does not traverse shared content
 - an existing local Scratchpad, unexpected link, or unfinished migration blocks removal; use `wt scratchpad` to reconcile and convert it
-- env files (`.env`, `.env.*`, `.dev.vars` — never `*.example` or `*.sample`) block removal only when the lane holds a `KEY=value` the primary lacks (or a differing value). Primary-superset drift, comments, ordering, and a simple value written with or without enclosing quotes are lossless and do not block. Drift is reported as key **names** only; values are never printed. Reconcile with `wt sync` in the intended direction before rerunning
+- local env files (`.env`, `.env.*`, `.dev.vars` — never `*.example` or `*.sample`) block removal only when the lane holds a `KEY=value` the primary lacks (or a differing value). Committed env is covered by Git history and dirty checks. Primary-superset drift, comments, ordering, and a simple value written with or without enclosing quotes are lossless and do not block. Drift is reported as key **names** only; values are never printed. Reconcile with `wt sync` in the intended direction before rerunning
+- existing tracked env with `assume-unchanged` or `skip-worktree` must match its saved Git blob, accounting for Git content normalization and symlinks. Omitted skip-worktree paths are allowed when their saved blob remains inspectable. With effective `core.symlinks=false`, emulated links are compared as raw target bytes. Hidden local edits or unreadable saved state block removal; inspection preserves the index and flags
+- generated env under known artifact directories is skipped by default, matching legacy sync. Recorded manifest selections and current primary/lane `.worktreeinclude` selections remain protected. A legacy marker uses the generated-output defaults; an older marker without a sync mode retains its recorded env evidence conservatively. Source env created after setup is checked even when the marker lists no copied files
 - dirty or status-unreadable worktrees block removal
 - `wt rm` refuses a worktree that contains the caller's current directory
 - initialized submodules must be clean (no changes, untracked, or ignored files); removal then runs `git submodule deinit --all`, restores the primary's submodule config that deinit clears, and retains the lane's submodule Git data under the primary's `.git/wt-submodules-*`
@@ -160,11 +162,13 @@ Ahead/behind counts compare a lane with its own `origin/<branch>` when that ref 
 
 Branch slashes are converted to dashes for the directory name.
 
-When no base is passed, wt resolves `origin/HEAD`, then falls back to a local `main`, `master`, or `dev`. It fails with a recovery-oriented error when none exists instead of assuming `main`.
+Creation first checks out an existing local branch, then creates the branch from a cached same-name `origin/<branch>` ref. Either wins over a supplied base. Only a genuinely new branch uses the supplied base, or defaults to `origin/HEAD`, local `main`/`master`/`dev`, then cached origin `main`/`master`/`dev`. It fails with a recovery-oriented error when no base exists. Creation never fetches.
+
+Primary-checkout discovery works from nested directories, linked lanes, and initialized submodules, including repositories whose primary `core.worktree` lives in `config.worktree`. A linked lane's own configuration does not choose the primary; a missing or foreign primary checkout blocks creation.
 
 New branches do not track their base, including `origin/<parent>` for a stacked lane. Git sets the lane's own upstream on its first `git push -u`. Pass `--track` (or `-t`) to `wt new` to explicitly track the base; `--no-track` is also forwarded. Checking out an existing branch leaves its upstream unchanged.
 
-Creation writes its current phase (`created`, `synced`, `installing`, `ready`, or `incomplete`) to `wt.json`. A failed dependency install exits nonzero and keeps the worktree for diagnosis, with the exact `cd … && ni` recovery command in both the terminal and marker. It never labels an incomplete worktree ready.
+Creation prints the selected source ref and SHA and records them as `source: { kind, ref, head }` in the worktree's private Git directory, in `wt.json`. `kind` is `local`, `origin`, or `base`. The marker also records its current phase (`created`, `synced`, `installing`, `post-install`, `ready`, or `incomplete`). A failed dependency install exits nonzero and keeps the worktree for diagnosis, with the exact `cd … && ni` recovery command in both the terminal and marker. It never labels an incomplete worktree ready.
 
 ### File sync
 
@@ -190,6 +194,8 @@ Without `.worktreeinclude`, wt 2.x retains the legacy config allowlist and print
 - **Scratchpad**: `.scratchpad/`
 - **Editor**: `.vscode/`, `.idea/`, `.zed/`
 - **Agent**: `.claude/` except `.claude/worktrees`
+
+Legacy defaults skip paths beneath `node_modules`, `.next`, `.turbo`, `dist`, `.cache`, `build`, `.build`, `Pods`, and `DerivedData`, including generated `.dev.vars`. Source `.dev.vars` outside those directories still syncs and receives env-drift protection, including under `.alchemy` and `.wrangler`. These are directory-name matches, not prefixes: `buildings/.env` remains source config. Explicit manifest selections can include those directories and remain protected during removal.
 
 Set `sync.requireInclude = true` to copy nothing from repositories without a manifest. User exclusions are subtractive and use the same pattern syntax:
 
