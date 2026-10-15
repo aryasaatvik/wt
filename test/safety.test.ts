@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { cmdRm } from "../src/rm.ts";
@@ -235,6 +235,85 @@ function markerFiles(wt: string, repo: FixtureRepo, syncedFiles: string[], mode?
 }
 
 describe("runSafetyPipeline tracked env ownership", () => {
+  test("permits omitted sparse-checkout env without changing sparse index or flags", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write("included/note.txt", "included\n");
+      repo.write("omitted/.env.production", "SETTING=saved\n");
+      repo.commit("sparse content");
+      const wt = repo.addWorktree("lane", { branch: "lane" });
+      repo.gitIn(wt, "sparse-checkout", "init", "--cone", "--sparse-index");
+      repo.gitIn(wt, "sparse-checkout", "set", "included");
+      expect(existsSync(join(wt, "omitted/.env.production"))).toBe(false);
+      const flagsBefore = repo.gitIn(wt, "ls-files", "-v", "--", "omitted/.env.production");
+      expect(flagsBefore.startsWith("S ")).toBe(true);
+      const indexPath = join(repo.gitIn(wt, "rev-parse", "--absolute-git-dir").trim(), "index");
+      const before = readFileSync(indexPath);
+      expect(await runSafetyPipeline(wt, repo.dir)).toEqual({ ok: true, flags: [] });
+      expect(readFileSync(indexPath).equals(before)).toBe(true);
+      expect(repo.gitIn(wt, "ls-files", "-v", "--", "omitted/.env.production")).toBe(flagsBefore);
+
+      const blob = repo.gitIn(wt, "rev-parse", "HEAD:omitted/.env.production").trim();
+      rmSync(join(repo.dir, ".git", "objects", blob.slice(0, 2), blob.slice(2)));
+      const missingSaved = await runSafetyPipeline(wt, repo.dir);
+      expect(missingSaved.ok).toBe(false);
+      expect(missingSaved.flags.some((entry) => entry.kind === "status-unreadable")).toBe(true);
+    } finally {
+      repo.rm();
+    }
+  });
+
+  for (const flag of ["--assume-unchanged", "--skip-worktree"] as const) {
+    test(`${flag} honors worktree symlinks=false and compares emulated links as raw bytes`, async () => {
+      const repo = makeRepo();
+      try {
+        repo.write(".gitattributes", ".env.production text eol=lf\n");
+        symlinkSync("saved\r\n.txt", join(repo.dir, ".env.production"));
+        repo.commit("env link");
+        const wt = repo.addWorktree("lane", { branch: "lane" });
+        repo.git("config", "extensions.worktreeConfig", "true");
+        repo.git("config", "core.symlinks", "true");
+        repo.gitIn(wt, "config", "--worktree", "core.symlinks", "false");
+        rmSync(join(wt, ".env.production"));
+        repo.gitIn(wt, "checkout-index", "--force", "--", ".env.production");
+        expect(lstatSync(join(wt, ".env.production")).isFile()).toBe(true);
+        expect(readFileSync(join(wt, ".env.production"), "utf8") === "saved\r\n.txt").toBe(true);
+        repo.gitIn(wt, "update-index", flag, "--", ".env.production");
+        const flagsBefore = repo.gitIn(wt, "ls-files", "-v", "--", ".env.production");
+        const indexPath = join(repo.gitIn(wt, "rev-parse", "--absolute-git-dir").trim(), "index");
+        const before = readFileSync(indexPath);
+        expect(await runSafetyPipeline(wt, repo.dir)).toEqual({ ok: true, flags: [] });
+        expect(readFileSync(indexPath).equals(before)).toBe(true);
+
+        writeIn(repo, wt, ".env.production", "changed\r\n.txt");
+        const edited = await runSafetyPipeline(wt, repo.dir);
+        expect(edited.ok).toBe(false);
+        expect(edited.flags.some((entry) => entry.kind === "dirty")).toBe(true);
+        expect(readFileSync(indexPath).equals(before)).toBe(true);
+        expect(repo.gitIn(wt, "ls-files", "-v", "--", ".env.production")).toBe(flagsBefore);
+        expect(readFileSync(join(wt, ".env.production"), "utf8") === "changed\r\n.txt").toBe(true);
+      } finally {
+        repo.rm();
+      }
+    });
+  }
+
+  test("refuses an existing unreadable skip-worktree env instead of treating it as omitted", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write(".env.production", "SETTING=saved\n");
+      repo.commit("saved env");
+      const wt = repo.addWorktree("lane", { branch: "lane" });
+      repo.gitIn(wt, "update-index", "--skip-worktree", "--", ".env.production");
+      chmodSync(join(wt, ".env.production"), 0);
+      const result = await runSafetyPipeline(wt, repo.dir);
+      expect(result.ok).toBe(false);
+      expect(result.flags.some((entry) => entry.kind === "status-unreadable")).toBe(true);
+    } finally {
+      repo.rm();
+    }
+  });
+
   for (const flag of ["--assume-unchanged", "--skip-worktree"] as const) {
     for (const path of [".env.production", "dist/.env.production"]) {
       test(`${flag} permits saved ${path} but refuses hidden local changes without changing the index`, async () => {
@@ -294,6 +373,10 @@ describe("runSafetyPipeline tracked env ownership", () => {
       expect(await runSafetyPipeline(wt, repo.dir)).toEqual({ ok: true, flags: [] });
       rmSync(join(wt, ".env.production"));
       symlinkSync("other.txt", join(wt, ".env.production"));
+      expect((await runSafetyPipeline(wt, repo.dir)).ok).toBe(false);
+      rmSync(join(wt, ".env.production"));
+      writeIn(repo, wt, ".env.production", "saved.txt");
+      repo.gitIn(wt, "config", "core.symlinks", "true");
       expect((await runSafetyPipeline(wt, repo.dir)).ok).toBe(false);
     } finally {
       repo.rm();

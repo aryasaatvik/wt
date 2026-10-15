@@ -159,12 +159,14 @@ function readIfExists(path: string): string | null {
   }
 }
 
-async function inspectHiddenTrackedEnv(wtPath: string, path: string, mode: string, blob: string): Promise<SafetyFlag | null> {
+async function inspectHiddenTrackedEnv(wtPath: string, path: string, mode: string, blob: string, skipWorktree: boolean): Promise<SafetyFlag | null> {
   const unreadable: SafetyFlag = { kind: "status-unreadable", detail: `cannot inspect saved tracked env: ${path}` };
   const saved = await runAsync(["git", "-C", wtPath, "cat-file", "-e", `${blob}^{blob}`]);
   if (!saved.ok) return unreadable;
   try {
-    const stat = lstatSync(join(wtPath, path));
+    const stat = statIfPresent(join(wtPath, path));
+    // Sparse checkout can intentionally omit skip-worktree entries entirely.
+    if (!stat) return skipWorktree ? null : unreadable;
     let hash: string;
     if (mode === "120000" && stat.isSymbolicLink()) {
       const result = Bun.spawnSync(["git", "-C", wtPath, "hash-object", "--stdin"], {
@@ -172,9 +174,17 @@ async function inspectHiddenTrackedEnv(wtPath: string, path: string, mode: strin
       });
       if (!result.success) return unreadable;
       hash = result.stdout.toString().trim();
-    } else if ((mode === "100644" || mode === "100755") && stat.isFile()) {
-      // Git's clean conversion accounts for attributes such as text/eol=crlf.
-      const result = await runAsync(["git", "-C", wtPath, "hash-object", "--path", path, "--", path]);
+    } else if ((mode === "100644" || mode === "100755" || mode === "120000") && stat.isFile()) {
+      let conversion = ["--path", path];
+      if (mode === "120000") {
+        const symlinks = await runAsync(["git", "-C", wtPath, "config", "--type=bool", "--get", "core.symlinks"]);
+        if (symlinks.ok && symlinks.stdout.trim() === "false") conversion = ["--no-filters"];
+        else if (symlinks.code === 1 || (symlinks.ok && symlinks.stdout.trim() === "true")) {
+          return { kind: "dirty", detail: `tracked env type differs from index: ${path}` };
+        } else return unreadable;
+      }
+      // Regular blobs use Git's clean conversion; emulated links contain raw link text.
+      const result = await runAsync(["git", "-C", wtPath, "hash-object", ...conversion, "--", path]);
       if (!result.ok) return unreadable;
       hash = result.stdout.trim();
     } else {
@@ -247,7 +257,7 @@ export async function runSafetyPipeline(
       const path = match[4]!;
       trackedPaths.add(path);
       if (isEnvFile(path) && (tag === "S" || tag !== tag.toUpperCase())) {
-        const hidden = await inspectHiddenTrackedEnv(wtPath, path, mode, blob);
+        const hidden = await inspectHiddenTrackedEnv(wtPath, path, mode, blob, tag.toUpperCase() === "S");
         if (hidden) flags.push(hidden);
       }
     }
