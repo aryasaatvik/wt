@@ -160,11 +160,13 @@ Ahead/behind counts compare a lane with its own `origin/<branch>` when that ref 
 
 Branch slashes are converted to dashes for the directory name.
 
-When no base is passed, wt resolves `origin/HEAD`, then falls back to a local `main`, `master`, or `dev`. It fails with a recovery-oriented error when none exists instead of assuming `main`.
+Creation first checks out an existing local branch, then creates the branch from a cached same-name `origin/<branch>` ref. Either wins over a supplied base. Only a genuinely new branch uses the supplied base, or defaults to `origin/HEAD`, local `main`/`master`/`dev`, then cached origin `main`/`master`/`dev`. It fails with a recovery-oriented error when no base exists. Creation never fetches.
+
+Primary-checkout discovery works from nested directories, linked lanes, and initialized submodules, including repositories whose primary `core.worktree` lives in `config.worktree`. A linked lane's own configuration does not choose the primary; a missing or foreign primary checkout blocks creation.
 
 New branches do not track their base, including `origin/<parent>` for a stacked lane. Git sets the lane's own upstream on its first `git push -u`. Pass `--track` (or `-t`) to `wt new` to explicitly track the base; `--no-track` is also forwarded. Checking out an existing branch leaves its upstream unchanged.
 
-Creation writes its current phase (`created`, `synced`, `installing`, `ready`, or `incomplete`) to `wt.json`. A failed dependency install exits nonzero and keeps the worktree for diagnosis, with the exact `cd … && ni` recovery command in both the terminal and marker. It never labels an incomplete worktree ready.
+Creation prints the selected source ref and SHA and records them as `source: { kind, ref, head }` in the worktree's private Git directory, in `wt.json`. `kind` is `local`, `origin`, or `base`. The marker also records its current phase (`created`, `synced`, `installing`, `post-install`, `ready`, or `incomplete`). A failed dependency install exits nonzero and keeps the worktree for diagnosis, with the exact `cd … && ni` recovery command in both the terminal and marker. It never labels an incomplete worktree ready.
 
 ### File sync
 

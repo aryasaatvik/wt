@@ -1,7 +1,7 @@
 // Git plumbing shared by wt commands.
 
 import { realpathSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { run } from "./term.ts";
 
 /**
@@ -20,10 +20,22 @@ import { run } from "./term.ts";
 export function resolvePrimaryRepo(cwd: string): string {
   const common = run(["git", "-C", cwd, "rev-parse", "--git-common-dir"]).trim();
   if (!common) throw new Error("not inside a git repository");
-  const commonDir = resolve(cwd, common);
-  const worktree = run(["git", "config", "--file", join(commonDir, "config"), "core.worktree"]).trim();
-  if (worktree) return realpathSync.native(resolve(commonDir, worktree));
-  return realpathSync.native(dirname(commonDir));
+  const commonDir = realpathSync.native(resolve(cwd, common));
+  // Bind config lookup to the primary Git dir: a linked lane's config.worktree
+  // may name its own checkout. Git loads the primary config.worktree only when
+  // extensions.worktreeConfig enables it.
+  const worktree = run(["git", "--git-dir", commonDir, "config", "--get", "core.worktree"]).trim();
+  let primary: string;
+  try {
+    primary = realpathSync.native(worktree ? resolve(commonDir, worktree) : dirname(commonDir));
+  } catch {
+    throw new Error(`cannot resolve primary checkout for ${commonDir}`);
+  }
+  const primaryGitDir = run(["git", "-C", primary, "rev-parse", "--absolute-git-dir"]).trim();
+  if (!primaryGitDir || realpathSync.native(primaryGitDir) !== commonDir) {
+    throw new Error(`invalid primary checkout ${primary} for ${commonDir}`);
+  }
+  return primary;
 }
 
 export interface WorktreeInfo {
@@ -104,4 +116,23 @@ export function branchExists(cwd: string, branch: string): boolean {
     Bun.spawnSync(["git", "-C", cwd, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`])
       .exitCode === 0
   );
+}
+
+export interface CreateSource {
+  kind: "local" | "origin" | "base";
+  ref: string;
+  head: string;
+}
+
+/** Select only cached refs; existing branches take precedence over a new branch's base. */
+export function resolveCreateSource(cwd: string, branch: string, base?: string): CreateSource {
+  const local = `refs/heads/${branch}`;
+  const remote = `refs/remotes/origin/${branch}`;
+  const hasRemote = Bun.spawnSync(["git", "-C", cwd, "show-ref", "--verify", "--quiet", remote]).exitCode === 0;
+  const kind = branchExists(cwd, branch) ? "local" : hasRemote ? "origin" : "base";
+  const ref = kind === "local" ? local : kind === "origin" ? remote : base ?? defaultBase(cwd);
+  if (!ref) throw new Error("cannot determine a default base (set origin/HEAD, create main/master/dev, or pass a base explicitly)");
+  const head = run(["git", "-C", cwd, "rev-parse", "--verify", `${ref}^{commit}`]).trim();
+  if (!head) throw new Error(`cannot resolve worktree source ${ref}`);
+  return { kind, ref, head };
 }

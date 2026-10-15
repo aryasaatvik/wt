@@ -2,7 +2,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { branchExists, resolvePrimaryRepo } from "./git.ts";
+import { type CreateSource, resolveCreateSource, resolvePrimaryRepo } from "./git.ts";
 import { applySyncPlan, planSync } from "./sync.ts";
 import { ensureSharedScratchpad } from "./scratchpad.ts";
 import { bold, dim, run, runAsync, spinner } from "./term.ts";
@@ -82,6 +82,8 @@ export interface ProvenanceMarker {
   updatedAt: string;
   branch: string;
   base: string | null;
+  /** Absent on markers written before source selection was recorded. */
+  source?: CreateSource;
   phase: "created" | "synced" | "installing" | "post-install" | "ready" | "incomplete";
   syncedFiles: string[];
   failure?: string;
@@ -129,8 +131,9 @@ export function readProvenance(wtDir: string): ProvenanceMarker | null {
   }
 }
 
-export async function cmdNew(branch: string, base: string, opts: CreateOptions): Promise<string> {
+export async function cmdNew(branch: string, base: string | undefined, opts: CreateOptions): Promise<string> {
   const repoRoot = resolvePrimaryRepo(opts.cwd);
+  const source = resolveCreateSource(repoRoot, branch, base);
   let createConfig: CreateConfig;
   try {
     createConfig = readCreateConfig(repoRoot);
@@ -144,19 +147,20 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
   console.log("");
   mkdirSync(dirname(wtDir), { recursive: true });
 
-  const existing = branchExists(repoRoot, branch);
+  const existing = source.kind === "local";
   const trackingFlag = opts.extraFlags.some((flag) =>
     flag === "-t" || flag === "--track" || flag.startsWith("--track=") || flag === "--no-track"
   );
   const newBranchFlags = opts.extraFlags.map((flag) => flag === "-t" ? "--track" : flag);
   const addArgs = existing
     ? ["git", "-C", repoRoot, "worktree", "add", wtDir, branch, ...opts.extraFlags]
-    : ["git", "-C", repoRoot, "worktree", "add", ...(trackingFlag ? [] : ["--no-track"]), "-b", branch, wtDir, base, ...newBranchFlags];
+    : ["git", "-C", repoRoot, "worktree", "add", ...(trackingFlag ? [] : ["--no-track"]), "-b", branch, wtDir, source.ref, ...newBranchFlags];
   info(
     existing
       ? `Checking out existing branch ${bold(branch)}`
-      : `Creating worktree ${bold(branch)} from ${dim(base)}`,
+      : `Creating worktree ${bold(branch)} from ${dim(source.ref)}`,
   );
+  info(`Source: ${source.ref} (${source.head})`);
   const spin = spinner("Creating worktree");
   const added = await runAsync(addArgs);
   spin.stop();
@@ -172,7 +176,8 @@ export async function cmdNew(branch: string, base: string, opts: CreateOptions):
     createdAt,
     updatedAt: createdAt,
     branch,
-    base: existing ? null : base,
+    base: existing ? null : source.ref,
+    source,
     phase: "created",
     syncedFiles: [],
   };

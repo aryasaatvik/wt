@@ -68,6 +68,63 @@ describe("cmdNew", () => {
     }
   });
 
+  test("prefers a divergent local branch over origin and the supplied base", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      repo.git("branch", "topic");
+      repo.git("push", "origin", "topic");
+      repo.write("local.txt", "local\n");
+      const localHead = repo.commit("local topic");
+      repo.git("branch", "-f", "topic", localHead);
+      const wtDir = await cmdNew("topic", "missing-base", { ...OPTS, cwd: repo.dir });
+      expect(repo.gitIn(wtDir, "rev-parse", "HEAD").trim()).toBe(localHead);
+      expect(readProvenance(wtDir)?.source).toEqual({ kind: "local", ref: "refs/heads/topic", head: localHead });
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("uses the same-name origin branch before a supplied base and runs setup at its SHA", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write("package.json", '{"packageManager":"bun@1.4.0"}\n');
+      repo.write("wt.toml", '[create]\npostInstall = "git rev-parse HEAD > setup-head.txt"\n');
+      const baseHead = repo.commit("setup config");
+      repo.addOrigin();
+      repo.write("remote.txt", "remote\n");
+      const remoteHead = repo.commit("remote topic");
+      repo.git("update-ref", "refs/remotes/origin/topic", remoteHead);
+      repo.git("reset", "--hard", baseHead);
+      const wtDir = await cmdNew("topic", "main", { ...OPTS, cwd: repo.dir, install: true, installRunner: async () => 0 });
+      expect(repo.gitIn(wtDir, "rev-parse", "HEAD").trim()).toBe(remoteHead);
+      expect(await Bun.file(join(wtDir, "setup-head.txt")).text()).toBe(`${remoteHead}\n`);
+      expect(repo.git("for-each-ref", "--format=%(upstream)", "refs/heads/topic").trim()).toBe("");
+      expect(readProvenance(wtDir)?.source).toEqual({ kind: "origin", ref: "refs/remotes/origin/topic", head: remoteHead });
+      expect(readProvenance(wtDir)?.base).toBe("refs/remotes/origin/topic");
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("honors explicit tracking flags for same-name origin branches", async () => {
+    const repo = makeRepo();
+    try {
+      repo.addOrigin();
+      for (const [branch, flags, upstream] of [
+        ["track", ["--track"], "refs/remotes/origin/track"],
+        ["short-track", ["-t"], "refs/remotes/origin/short-track"],
+        ["no-track", ["--no-track"], ""],
+      ] as const) {
+        repo.git("update-ref", `refs/remotes/origin/${branch}`, "HEAD");
+        await cmdNew(branch, "missing-base", { ...OPTS, cwd: repo.dir, extraFlags: [...flags] });
+        expect(repo.git("for-each-ref", "--format=%(upstream)", `refs/heads/${branch}`).trim()).toBe(upstream);
+      }
+    } finally {
+      repo.rm();
+    }
+  });
+
   test("new branches do not track a remote base unless tracking is requested", async () => {
     const repo = makeRepo();
     try {
@@ -319,6 +376,57 @@ describe("defaultBase", () => {
 });
 
 describe("resolvePrimaryRepo", () => {
+  test("uses the embedded primary config.worktree rather than a linked lane's config", async () => {
+    const superproject = makeRepo();
+    const submodule = makeRepo();
+    try {
+      submodule.write("package.json", '{"packageManager":"bun@1.4.0"}\n');
+      submodule.write("wt.toml", '[create]\npostInstall = "git rev-parse HEAD > setup-head.txt"\n');
+      const setupHead = submodule.commit("setup config");
+      superproject.git("-c", "protocol.file.allow=always", "submodule", "add", submodule.dir, "modules/child");
+      const checkout = join(superproject.dir, "modules", "child");
+      const common = superproject.gitIn(checkout, "rev-parse", "--absolute-git-dir").trim();
+      superproject.gitIn(checkout, "config", "extensions.worktreeConfig", "true");
+      superproject.gitIn(checkout, "config", "--file", join(common, "config.worktree"), "core.worktree", checkout);
+      superproject.gitIn(checkout, "config", "--file", join(common, "config"), "--unset", "core.worktree");
+      const lane = join(superproject.root, "existing-lane");
+      superproject.gitIn(checkout, "worktree", "add", "-b", "existing-lane", lane);
+      superproject.gitIn(lane, "config", "--worktree", "core.worktree", lane);
+      mkdirSync(join(lane, "nested"));
+      expect(resolvePrimaryRepo(checkout)).toBe(checkout);
+      expect(resolvePrimaryRepo(join(lane, "nested"))).toBe(checkout);
+      superproject.gitIn(checkout, "update-ref", "refs/remotes/origin/feat/embedded", setupHead);
+      const created = await cmdNew("feat/embedded", "missing-base", {
+        ...OPTS, cwd: join(lane, "nested"), install: true, installRunner: async () => 0,
+      });
+      expect(created).toBe(join(superproject.dir, "modules", "child-worktrees", "feat-embedded"));
+      expect(superproject.gitIn(created, "branch", "--show-current").trim()).toBe("feat/embedded");
+      expect(await Bun.file(join(created, "setup-head.txt")).text()).toBe(`${setupHead}\n`);
+    } finally {
+      superproject.rm();
+      submodule.rm();
+    }
+  });
+
+  test("refuses missing or foreign primary checkout identity", () => {
+    const superproject = makeRepo();
+    const submodule = makeRepo();
+    try {
+      superproject.git("-c", "protocol.file.allow=always", "submodule", "add", submodule.dir, "modules/child");
+      const checkout = join(superproject.dir, "modules", "child");
+      const common = superproject.gitIn(checkout, "rev-parse", "--absolute-git-dir").trim();
+      const lane = join(superproject.root, "existing-lane");
+      superproject.gitIn(checkout, "worktree", "add", "-b", "existing-lane", lane);
+      superproject.gitIn(checkout, "config", "--file", join(common, "config"), "core.worktree", join(superproject.root, "missing"));
+      expect(() => resolvePrimaryRepo(lane)).toThrow();
+      superproject.gitIn(lane, "config", "--file", join(common, "config"), "core.worktree", submodule.dir);
+      expect(() => resolvePrimaryRepo(lane)).toThrow("primary");
+    } finally {
+      superproject.rm();
+      submodule.rm();
+    }
+  });
+
   test("resolves an initialized local submodule to its checkout", async () => {
     const superproject = makeRepo();
     const submodule = makeRepo();

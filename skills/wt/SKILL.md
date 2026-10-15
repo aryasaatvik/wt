@@ -42,7 +42,7 @@ Worktree task?
 wt x/my-feature
 
 # Explicit create
-wt new x/my-feature # origin/HEAD, then local main/master/dev
+wt new x/my-feature # local branch, same-name origin ref, then default base
 wt create x/my-feature
 
 # From a specific base branch
@@ -57,9 +57,11 @@ wt new x/my-feature --no-post-install
 
 Creates worktree at `../<repo>-worktrees/<slug>/` where slashes in the branch name become dashes (e.g., `x/my-feature` → `x-my-feature`).
 
+An existing local branch wins, followed by a cached same-name `origin/<branch>` ref, even when a base is supplied. Only a genuinely new branch uses the supplied base or defaults to `origin/HEAD`, local `main`/`master`/`dev`, then cached origin `main`/`master`/`dev`. No fetch runs. The terminal prints the selected ref/SHA and the private Git directory's `wt.json` records `source: { kind, ref, head }`; read that marker to verify which source setup used. Primary discovery uses the primary's configuration, including `config.worktree`, and refuses missing or foreign checkout identity.
+
 Steps performed:
 
-1. `git worktree add --no-track -b <branch> <path> <base>` — a new branch never tracks its base, so a
+1. Check out an existing local branch, or `git worktree add --no-track -b <branch> <path> <source>` — by default a new local branch never tracks its source, so a
    stacked lane from `origin/<parent>` does not compare against its parent; its first `git push -u`
    sets its own upstream. Pass `--track` (or `-t`) to track the base deliberately.
 2. Link `.scratchpad` to the primary checkout (relative symlink; creation never replaces an existing local directory)
