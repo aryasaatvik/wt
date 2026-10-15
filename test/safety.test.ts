@@ -234,6 +234,40 @@ function markerFiles(wt: string, repo: FixtureRepo, syncedFiles: string[], mode?
   );
 }
 
+describe("runSafetyPipeline tracked env ownership", () => {
+  for (const mode of ["no marker", "old marker", "legacy", "manifest", "none"] as const) {
+    test(`${mode} leaves committed env to Git while protecting new ignored env`, async () => {
+      const repo = makeRepo();
+      try {
+        repo.write(".gitignore", ".env.local\n");
+        repo.write(".env.production", "SETTING=primary\n");
+        repo.write(".worktreeinclude", ".env*\n");
+        repo.commit("env policy");
+        const wt = repo.addWorktree("lane", { branch: "lane" });
+        writeIn(repo, wt, ".env.production", "SETTING=branch\n");
+        repo.gitIn(wt, "add", "--", ".env.production");
+        repo.gitIn(wt, "commit", "-m", "branch env");
+        if (mode !== "no marker") markerFiles(wt, repo, [".env.production"], mode === "old marker" ? undefined : mode);
+
+        expect(repo.gitIn(wt, "status", "--porcelain").trim()).toBe("");
+        expect(await runSafetyPipeline(wt, repo.dir)).toEqual({ ok: true, flags: [] });
+
+        writeIn(repo, wt, ".env.local", "LOCAL=unique\n");
+        const local = await runSafetyPipeline(wt, repo.dir);
+        expect(local.flags).toEqual([{ kind: "env-drift", detail: ".env.local: missing in primary (1 keys)" }]);
+        expect(local.ok).toBe(false);
+
+        writeIn(repo, wt, ".env.production", "SETTING=uncommitted\n");
+        const dirty = await runSafetyPipeline(wt, repo.dir);
+        expect(dirty.flags.some((flag) => flag.kind === "dirty")).toBe(true);
+        expect(dirty.ok).toBe(false);
+      } finally {
+        repo.rm();
+      }
+    });
+  }
+});
+
 describe("runSafetyPipeline generated env ownership", () => {
   test("protects generated env newly selected by primary policy after legacy creation", async () => {
     const repo = makeRepo();

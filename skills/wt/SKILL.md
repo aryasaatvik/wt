@@ -97,8 +97,9 @@ directory — run it from the primary checkout or another worktree. `wt rm` has 
 with `wt reap` before removal.
 
 Every removal runs the same fail-closed safety pipeline. It refuses dirty or status-unreadable
-worktrees and env files that drifted from the primary (reporting key names, never values). A shared
-`.scratchpad` link must resolve to the primary's real directory; the check validates that identity
+worktrees and local env files that drifted from the primary (reporting key names, never values).
+Committed env is covered by Git history and dirty checks. A shared `.scratchpad` link must resolve
+to the primary's real directory; the check validates that identity
 without walking notes or creating an archive. A local Scratchpad directory, broken or foreign link,
 or unfinished migration (`wt-scratchpad-original` / `wt-scratchpad-migration.lock`) blocks removal —
 preview and convert first with `wt scratchpad`. `wt` evaluates the pipeline read-only first, and it

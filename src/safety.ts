@@ -202,6 +202,13 @@ export async function runSafetyPipeline(
     const manifestPath = join(root, ".worktreeinclude");
     if (existsSync(manifestPath)) candidates.push(...(await selectedByManifest(wtPath, manifestPath)).filter(isEnvFile));
   }
+  // Git preserves committed env; the dirty check protects uncommitted edits.
+  const tracked = await runAsync(["git", "-C", wtPath, "ls-files", "--cached", "-z"]);
+  if (!tracked.ok) flags.push({ kind: "status-unreadable", detail: "cannot inspect tracked env ownership" });
+  else {
+    const trackedPaths = new Set(tracked.stdout.split("\0"));
+    candidates = candidates.filter((path) => !trackedPaths.has(path));
+  }
   candidates = candidates.filter((path) => !isExcluded(path));
   const userExcludes = config.exclude;
   if (userExcludes.length > 0) {
