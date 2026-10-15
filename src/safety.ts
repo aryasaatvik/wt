@@ -1,6 +1,6 @@
 // Read-only removal checks: shared Scratchpad identity, environment drift, and Git cleanliness.
 
-import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { join, relative } from "node:path";
 import { scratchpadState, statIfPresent } from "./scratchpad.ts";
 import { readProvenance } from "./create.ts";
@@ -159,6 +159,33 @@ function readIfExists(path: string): string | null {
   }
 }
 
+async function inspectHiddenTrackedEnv(wtPath: string, path: string, mode: string, blob: string): Promise<SafetyFlag | null> {
+  const unreadable: SafetyFlag = { kind: "status-unreadable", detail: `cannot inspect saved tracked env: ${path}` };
+  const saved = await runAsync(["git", "-C", wtPath, "cat-file", "-e", `${blob}^{blob}`]);
+  if (!saved.ok) return unreadable;
+  try {
+    const stat = lstatSync(join(wtPath, path));
+    let hash: string;
+    if (mode === "120000" && stat.isSymbolicLink()) {
+      const result = Bun.spawnSync(["git", "-C", wtPath, "hash-object", "--stdin"], {
+        stdin: Buffer.from(readlinkSync(join(wtPath, path))), stdout: "pipe", stderr: "pipe",
+      });
+      if (!result.success) return unreadable;
+      hash = result.stdout.toString().trim();
+    } else if ((mode === "100644" || mode === "100755") && stat.isFile()) {
+      // Git's clean conversion accounts for attributes such as text/eol=crlf.
+      const result = await runAsync(["git", "-C", wtPath, "hash-object", "--path", path, "--", path]);
+      if (!result.ok) return unreadable;
+      hash = result.stdout.trim();
+    } else {
+      return { kind: "dirty", detail: `tracked env type differs from index: ${path}` };
+    }
+    return hash === blob ? null : { kind: "dirty", detail: `tracked env differs from index: ${path}` };
+  } catch {
+    return unreadable;
+  }
+}
+
 export async function runSafetyPipeline(
   wtPath: string,
   repoRoot: string,
@@ -167,7 +194,7 @@ export async function runSafetyPipeline(
   const flags: SafetyFlag[] = [];
 
   // 1. dirty — fail closed if status is unreadable
-  const status = await runAsync(["git", "-C", wtPath, "status", "--porcelain"]);
+  const status = await runAsync(["git", "--no-optional-locks", "-C", wtPath, "status", "--porcelain"]);
   if (!status.ok) {
     flags.push({ kind: "status-unreadable", detail: status.stderr.trim() });
   } else if (status.stdout.trim()) {
@@ -202,11 +229,28 @@ export async function runSafetyPipeline(
     const manifestPath = join(root, ".worktreeinclude");
     if (existsSync(manifestPath)) candidates.push(...(await selectedByManifest(wtPath, manifestPath)).filter(isEnvFile));
   }
-  // Git preserves committed env; the dirty check protects uncommitted edits.
-  const tracked = await runAsync(["git", "-C", wtPath, "ls-files", "--cached", "-z"]);
+  // Index flags can hide local edits from status. Compare those paths with the
+  // saved blob without refreshing the index or changing its flags.
+  const tracked = await runAsync(["git", "-C", wtPath, "ls-files", "--cached", "--stage", "-v", "-z"]);
   if (!tracked.ok) flags.push({ kind: "status-unreadable", detail: "cannot inspect tracked env ownership" });
   else {
-    const trackedPaths = new Set(tracked.stdout.split("\0"));
+    const trackedPaths = new Set<string>();
+    for (const entry of tracked.stdout.split("\0").filter(Boolean)) {
+      const match = /^([A-Za-z]) ([0-7]{6}) ([0-9a-f]{40,64}) [0-3]\t([\s\S]*)$/.exec(entry);
+      if (!match) {
+        flags.push({ kind: "status-unreadable", detail: "cannot parse tracked env ownership" });
+        continue;
+      }
+      const tag = match[1]!;
+      const mode = match[2]!;
+      const blob = match[3]!;
+      const path = match[4]!;
+      trackedPaths.add(path);
+      if (isEnvFile(path) && (tag === "S" || tag !== tag.toUpperCase())) {
+        const hidden = await inspectHiddenTrackedEnv(wtPath, path, mode, blob);
+        if (hidden) flags.push(hidden);
+      }
+    }
     candidates = candidates.filter((path) => !trackedPaths.has(path));
   }
   candidates = candidates.filter((path) => !isExcluded(path));

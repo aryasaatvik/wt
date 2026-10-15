@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { cmdRm } from "../src/rm.ts";
@@ -235,6 +235,88 @@ function markerFiles(wt: string, repo: FixtureRepo, syncedFiles: string[], mode?
 }
 
 describe("runSafetyPipeline tracked env ownership", () => {
+  for (const flag of ["--assume-unchanged", "--skip-worktree"] as const) {
+    for (const path of [".env.production", "dist/.env.production"]) {
+      test(`${flag} permits saved ${path} but refuses hidden local changes without changing the index`, async () => {
+        const repo = makeRepo();
+        try {
+          repo.write(path, "SETTING=saved\n");
+          repo.commit("saved env");
+          const wt = repo.addWorktree("lane", { branch: "lane" });
+          markerFiles(wt, repo, [], "legacy");
+          repo.gitIn(wt, "update-index", flag, "--", path);
+          const indexPath = join(repo.gitIn(wt, "rev-parse", "--absolute-git-dir").trim(), "index");
+          const before = readFileSync(indexPath);
+          const flagsBefore = repo.gitIn(wt, "ls-files", "-v", "--", path);
+
+          expect(await runSafetyPipeline(wt, repo.dir)).toEqual({ ok: true, flags: [] });
+          expect(readFileSync(indexPath).equals(before)).toBe(true);
+          writeIn(repo, wt, path, "SETTING=hidden-local\n");
+          expect(repo.gitIn(wt, "status", "--porcelain").trim()).toBe("");
+          const hidden = await runSafetyPipeline(wt, repo.dir);
+          expect(hidden.ok).toBe(false);
+          expect(hidden.flags.some((entry) => entry.kind === "dirty")).toBe(true);
+          expect(JSON.stringify(hidden.flags)).not.toContain("hidden-local");
+          expect(readFileSync(join(wt, path), "utf8") === "SETTING=hidden-local\n").toBe(true);
+          expect(readFileSync(indexPath).equals(before)).toBe(true);
+          expect(repo.gitIn(wt, "ls-files", "-v", "--", path)).toBe(flagsBefore);
+        } finally {
+          repo.rm();
+        }
+      });
+    }
+  }
+
+  test("compares hidden tracked env with Git's normalized content", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write(".gitattributes", ".env.production text eol=crlf\n");
+      repo.write(".env.production", "SETTING=saved\n");
+      repo.commit("normalized env");
+      const wt = repo.addWorktree("lane", { branch: "lane" });
+      repo.gitIn(wt, "update-index", "--assume-unchanged", "--", ".env.production");
+      expect(readFileSync(join(wt, ".env.production"), "utf8").includes("\r\n")).toBe(true);
+      expect(await runSafetyPipeline(wt, repo.dir)).toEqual({ ok: true, flags: [] });
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("compares hidden tracked env symlinks as saved Git links", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write("saved.txt", "SETTING=saved\n");
+      repo.write("other.txt", "SETTING=other\n");
+      symlinkSync("saved.txt", join(repo.dir, ".env.production"));
+      repo.commit("env link");
+      const wt = repo.addWorktree("lane", { branch: "lane" });
+      repo.gitIn(wt, "update-index", "--skip-worktree", "--", ".env.production");
+      expect(await runSafetyPipeline(wt, repo.dir)).toEqual({ ok: true, flags: [] });
+      rmSync(join(wt, ".env.production"));
+      symlinkSync("other.txt", join(wt, ".env.production"));
+      expect((await runSafetyPipeline(wt, repo.dir)).ok).toBe(false);
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("refuses hidden tracked env when its saved blob cannot be inspected", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write(".env.production", "SETTING=saved\n");
+      repo.commit("saved env");
+      const wt = repo.addWorktree("lane", { branch: "lane" });
+      const blob = repo.gitIn(wt, "rev-parse", "HEAD:.env.production").trim();
+      repo.gitIn(wt, "update-index", "--assume-unchanged", "--", ".env.production");
+      rmSync(join(repo.dir, ".git", "objects", blob.slice(0, 2), blob.slice(2)));
+      const result = await runSafetyPipeline(wt, repo.dir);
+      expect(result.ok).toBe(false);
+      expect(result.flags.some((entry) => entry.kind === "status-unreadable")).toBe(true);
+    } finally {
+      repo.rm();
+    }
+  });
+
   for (const mode of ["no marker", "old marker", "legacy", "manifest", "none"] as const) {
     test(`${mode} leaves committed env to Git while protecting new ignored env`, async () => {
       const repo = makeRepo();

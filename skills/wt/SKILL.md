@@ -105,6 +105,8 @@ or unfinished migration (`wt-scratchpad-original` / `wt-scratchpad-migration.loc
 preview and convert first with `wt scratchpad`. `wt` evaluates the pipeline read-only first, and it
 never passes `--force` to Git.
 
+Tracked env marked `assume-unchanged` or `skip-worktree` must match its saved Git blob; hidden local edits or unreadable saved state block removal. The check accounts for Git content normalization and symlinks without changing the index or its flags.
+
 Generated env under known artifact directories follows the legacy sync exclusions below. Explicit manifest selections remain protected, including selections introduced after creation; recorded manifest selections and older markers without a known sync mode retain their env evidence. Unique source env created after setup still blocks removal even if the marker copied nothing.
 
 A lane with initialized submodules is removed only when every submodule checkout is clean (no
