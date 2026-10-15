@@ -191,7 +191,7 @@ The sync step uses `.worktreeinclude` as repository policy. Without one, wt 2.x 
 - **Editor**: `.vscode/`, `.idea/`, `.zed/`
 - **Agent**: `.claude/` except `.claude/worktrees`
 
-Legacy sync and default removal checks skip paths beneath `node_modules`, `.next`, `.turbo`, `dist`, `.cache`, `build`, `.build`, `Pods`, `DerivedData`, `.alchemy`, and `.wrangler`. This includes generated `.dev.vars`; source `.dev.vars` elsewhere still syncs and is protected. A repository can deliberately select these paths with `.worktreeinclude`, which preserves their removal protection.
+Legacy sync and default removal checks skip paths beneath `node_modules`, `.next`, `.turbo`, `dist`, `.cache`, `build`, `.build`, `Pods`, and `DerivedData`. This includes generated `.dev.vars`; source `.dev.vars` elsewhere, including under `.alchemy` and `.wrangler`, still syncs and is protected. A repository can deliberately select these paths with `.worktreeinclude`, which preserves their removal protection.
 
 Set `sync.requireInclude = true` under `[sync]` in `~/.config/wt/config.toml` to disable the fallback. `sync.exclude` is an array of subtractive Git-style patterns. Hard exclusions only protect `.git`, `.claude/worktrees`, and `.conductor`. Scratchpad is always filtered out of sync, including fallback and `--force`. There is no separate `.worktreeignore`; use ordered `!` rules in the manifest and user config for machine-specific exclusions.
 

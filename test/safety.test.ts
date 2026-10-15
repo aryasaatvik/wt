@@ -238,15 +238,15 @@ describe("runSafetyPipeline generated env ownership", () => {
   test("protects generated env newly selected by primary policy after legacy creation", async () => {
     const repo = makeRepo();
     try {
-      repo.write(".gitignore", ".alchemy/\n");
+      repo.write(".gitignore", "dist/\n");
       repo.commit("ignores");
       const wt = repo.addWorktree("lane", { branch: "lane" });
       markerFiles(wt, repo, [], "legacy");
-      repo.write(".worktreeinclude", ".alchemy/**\n");
+      repo.write(".worktreeinclude", "dist/**\n");
       repo.commit("select generated env explicitly");
-      writeIn(repo, wt, ".alchemy/worker/.dev.vars", "SELECTED=1\n");
+      writeIn(repo, wt, "dist/worker/.dev.vars", "SELECTED=1\n");
       const result = await runSafetyPipeline(wt, repo.dir);
-      expect(result.flags.filter((flag) => flag.kind === "env-drift").map((flag) => flag.detail)).toEqual([".alchemy/worker/.dev.vars: missing in primary (1 keys)"]);
+      expect(result.flags.filter((flag) => flag.kind === "env-drift").map((flag) => flag.detail)).toEqual(["dist/worker/.dev.vars: missing in primary (1 keys)"]);
       expect(result.ok).toBe(false);
     } finally {
       repo.rm();
@@ -260,8 +260,8 @@ describe("runSafetyPipeline generated env ownership", () => {
         repo.write(".gitignore", ".env\n.dev.vars\nnode_modules/\n.next/\n.turbo/\ndist/\n.cache/\nbuild/\n.build/\nPods/\nDerivedData/\n.alchemy/\n.wrangler/\n");
         repo.commit("ignores");
         const wt = repo.addWorktree("lane", { branch: "lane" });
-        const generated = ["node_modules/pkg/.env", ".next/.env", ".turbo/.env", "dist/.env", ".cache/.env", "build/.env", ".build/.env", "Pods/.env", "DerivedData/.env", "apps/web/.alchemy/worker/.dev.vars", "apps/web/.wrangler/state/.dev.vars"];
-        const source = [".env", "apps/web/.dev.vars", "buildings/.env", "apps/web/.alchemy-config/.dev.vars"];
+        const generated = ["node_modules/pkg/.env", ".next/.env", ".turbo/.env", "dist/.env", ".cache/.env", "build/.env", ".build/.env", "Pods/.env", "DerivedData/.env", "apps/web/dist/worker/.dev.vars"];
+        const source = [".env", "apps/web/.dev.vars", "buildings/.env", "apps/web/.alchemy-config/.dev.vars", "apps/web/.alchemy/worker/.dev.vars", "apps/web/.wrangler/state/.dev.vars"];
         for (const path of [...generated, ...source]) writeIn(repo, wt, path, "UNIQUE=1\n");
         if (mode) markerFiles(wt, repo, [...generated, ...source], mode);
 
@@ -279,11 +279,11 @@ describe("runSafetyPipeline generated env ownership", () => {
     test(`${mode ?? "current manifest without provenance"} protects selected generated env`, async () => {
       const repo = makeRepo();
       try {
-        repo.write(".gitignore", ".alchemy/\nnode_modules/\n");
-        repo.write(".worktreeinclude", ".alchemy/**\nnode_modules/**\n");
+        repo.write(".gitignore", "dist/\nnode_modules/\n");
+        repo.write(".worktreeinclude", "dist/**\nnode_modules/**\n");
         repo.commit("explicit selections");
         const wt = repo.addWorktree("lane", { branch: "lane" });
-        const selected = [".alchemy/worker/.dev.vars", "node_modules/tool/.env"];
+        const selected = ["dist/worker/.dev.vars", "node_modules/tool/.env"];
         for (const path of selected) writeIn(repo, wt, path, "SELECTED=1\n");
         if (mode) {
           markerFiles(wt, repo, selected, mode);
@@ -302,7 +302,7 @@ describe("runSafetyPipeline generated env ownership", () => {
     const repo = makeRepo();
     try {
       const wt = repo.addWorktree("lane", { branch: "lane" });
-      const selected = [".alchemy/worker/.dev.vars", "node_modules/tool/.env"];
+      const selected = ["dist/worker/.dev.vars", "node_modules/tool/.env"];
       markerFiles(wt, repo, selected);
       for (const path of selected) writeIn(repo, wt, path, "UNIQUE=1\n");
       const result = await runSafetyPipeline(wt, repo.dir);

@@ -68,8 +68,8 @@ describe("sync planner", () => {
       repo.write(".gitignore", ".env\n.env.*\n.dev.vars\nnode_modules/\n.next/\n.turbo/\ndist/\n.cache/\nbuild/\n.build/\nPods/\nDerivedData/\n.alchemy/\n.wrangler/\n");
       repo.commit("ignores");
       const target = repo.addWorktree("lane", { branch: "lane" });
-      const generated = ["node_modules/pkg/.env", ".next/.env", ".turbo/.env", "dist/.env", ".cache/.env", "build/.env", ".build/.env", "Pods/.env", "DerivedData/.env", "apps/web/.alchemy/worker/.dev.vars", "apps/web/.wrangler/state/.dev.vars"];
-      const source = [".env", "apps/web/.dev.vars", "buildings/.env", "apps/web/.alchemy-config/.dev.vars"];
+      const generated = ["node_modules/pkg/.env", ".next/.env", ".turbo/.env", "dist/.env", ".cache/.env", "build/.env", ".build/.env", "Pods/.env", "DerivedData/.env", "apps/web/dist/worker/.dev.vars"];
+      const source = [".env", "apps/web/.dev.vars", "buildings/.env", "apps/web/.alchemy-config/.dev.vars", "apps/web/.alchemy/worker/.dev.vars", "apps/web/.wrangler/state/.dev.vars"];
       for (const path of [...generated, ...source]) repo.write(path, "SOURCE=1\n");
 
       const plan = await planSync(repo.dir, target, { config: { requireInclude: false, exclude: [] } });
@@ -86,19 +86,19 @@ describe("sync planner", () => {
   test("manifest sync preserves deliberate generated env selections", async () => {
     const repo = makeRepo();
     try {
-      repo.write(".gitignore", ".alchemy/\nnode_modules/\n");
-      repo.write(".worktreeinclude", ".alchemy/**\nnode_modules/**\n");
+      repo.write(".gitignore", "dist/\nnode_modules/\n");
+      repo.write(".worktreeinclude", "dist/**\nnode_modules/**\n");
       repo.commit("explicit generated selections");
       const target = repo.addWorktree("lane", { branch: "lane" });
-      repo.write(".alchemy/worker/.dev.vars", "SELECTED=1\n");
+      repo.write("dist/worker/.dev.vars", "SELECTED=1\n");
       repo.write("node_modules/tool/.env", "SELECTED=1\n");
       const plan = await planSync(repo.dir, target, { config: { requireInclude: false, exclude: [] } });
       expect(plan.actions.map((action) => [action.path, action.status])).toEqual([
-        [".alchemy/worker/.dev.vars", "copy"],
+        ["dist/worker/.dev.vars", "copy"],
         ["node_modules/tool/.env", "copy"],
       ]);
       await applySyncPlan(plan);
-      expect(readFileSync(join(target, ".alchemy/worker/.dev.vars"), "utf8")).toBe("SELECTED=1\n");
+      expect(readFileSync(join(target, "dist/worker/.dev.vars"), "utf8")).toBe("SELECTED=1\n");
     } finally {
       repo.rm();
     }

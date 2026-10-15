@@ -194,7 +194,7 @@ Without `.worktreeinclude`, wt 2.x retains the legacy config allowlist and print
 - **Editor**: `.vscode/`, `.idea/`, `.zed/`
 - **Agent**: `.claude/` except `.claude/worktrees`
 
-Legacy defaults skip paths beneath `node_modules`, `.next`, `.turbo`, `dist`, `.cache`, `build`, `.build`, `Pods`, `DerivedData`, `.alchemy`, and `.wrangler`, including generated `.dev.vars`. Source `.dev.vars` outside those directories still syncs and receives env-drift protection. These are directory-name matches, not prefixes: `buildings/.env` remains source config. Explicit manifest selections can include those directories and remain protected during removal.
+Legacy defaults skip paths beneath `node_modules`, `.next`, `.turbo`, `dist`, `.cache`, `build`, `.build`, `Pods`, and `DerivedData`, including generated `.dev.vars`. Source `.dev.vars` outside those directories still syncs and receives env-drift protection, including under `.alchemy` and `.wrangler`. These are directory-name matches, not prefixes: `buildings/.env` remains source config. Explicit manifest selections can include those directories and remain protected during removal.
 
 Set `sync.requireInclude = true` to copy nothing from repositories without a manifest. User exclusions are subtractive and use the same pattern syntax:
 

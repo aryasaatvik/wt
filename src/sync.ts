@@ -46,7 +46,7 @@ export function isAllowed(rel: string): boolean {
 
 /** Legacy discovery skips generated output; explicit manifest selections remain authoritative. */
 export const GENERATED_DIRS = [
-  "node_modules", ".next", ".turbo", "dist", ".cache", "build", ".build", "Pods", "DerivedData", ".alchemy", ".wrangler",
+  "node_modules", ".next", ".turbo", "dist", ".cache", "build", ".build", "Pods", "DerivedData",
 ] as const;
 const GENERATED_DIR_SET = new Set<string>(GENERATED_DIRS);
 
