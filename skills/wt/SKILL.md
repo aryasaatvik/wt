@@ -104,6 +104,8 @@ or unfinished migration (`wt-scratchpad-original` / `wt-scratchpad-migration.loc
 preview and convert first with `wt scratchpad`. `wt` evaluates the pipeline read-only first, and it
 never passes `--force` to Git.
 
+Generated env under known artifact directories follows the legacy sync exclusions below. Explicit manifest selections remain protected, including selections introduced after creation; recorded manifest selections and older markers without a known sync mode retain their env evidence. Unique source env created after setup still blocks removal even if the marker copied nothing.
+
 A lane with initialized submodules is removed only when every submodule checkout is clean (no
 changes, untracked, or ignored files); `wt rm` and `wt reap --apply` then run `git submodule deinit
 --all`, restore the primary's submodule config that deinit clears, and retain the lane's submodule Git
@@ -188,6 +190,8 @@ The sync step uses `.worktreeinclude` as repository policy. Without one, wt 2.x 
 - **Env**: `.env`, `.env.*`, `.dev.vars` (never `*.example`)
 - **Editor**: `.vscode/`, `.idea/`, `.zed/`
 - **Agent**: `.claude/` except `.claude/worktrees`
+
+Legacy sync and default removal checks skip paths beneath `node_modules`, `.next`, `.turbo`, `dist`, `.cache`, `build`, `.build`, `Pods`, `DerivedData`, `.alchemy`, and `.wrangler`. This includes generated `.dev.vars`; source `.dev.vars` elsewhere still syncs and is protected. A repository can deliberately select these paths with `.worktreeinclude`, which preserves their removal protection.
 
 Set `sync.requireInclude = true` under `[sync]` in `~/.config/wt/config.toml` to disable the fallback. `sync.exclude` is an array of subtractive Git-style patterns. Hard exclusions only protect `.git`, `.claude/worktrees`, and `.conductor`. Scratchpad is always filtered out of sync, including fallback and `--force`. There is no separate `.worktreeignore`; use ordered `!` rules in the manifest and user config for machine-specific exclusions.
 

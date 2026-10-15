@@ -44,6 +44,16 @@ export function isAllowed(rel: string): boolean {
   return rel.split("/").slice(0, -1).some((component) => ALLOW_DIR_SET.has(component));
 }
 
+/** Legacy discovery skips generated output; explicit manifest selections remain authoritative. */
+export const GENERATED_DIRS = [
+  "node_modules", ".next", ".turbo", "dist", ".cache", "build", ".build", "Pods", "DerivedData", ".alchemy", ".wrangler",
+] as const;
+const GENERATED_DIR_SET = new Set<string>(GENERATED_DIRS);
+
+export function isGeneratedPath(rel: string): boolean {
+  return rel.split("/").slice(0, -1).some((component) => GENERATED_DIR_SET.has(component));
+}
+
 /** Only state whose copying can corrupt Git or another worktree manager is unconditional. */
 export const SYNC_EXCLUDE = [".git", ".claude/worktrees", ".conductor"] as const;
 
@@ -115,7 +125,7 @@ async function gitIgnored(repo: string, pathspecs: readonly string[] = []): Prom
   return result.stdout.split("\0").filter(Boolean);
 }
 
-async function selectedByManifest(repo: string, manifestPath: string): Promise<string[]> {
+export async function selectedByManifest(repo: string, manifestPath: string): Promise<string[]> {
   const result = await runAsync([
     "git", "-C", repo, "ls-files", "--others", "--ignored", `--exclude-from=${manifestPath}`, "-z", "--", ":(top,exclude).scratchpad",
   ]);
@@ -328,7 +338,7 @@ export async function planSync(source: string, target: string, options: PlanSync
   const sourceIgnored = mode === "manifest" ? await ignoredByTarget(source, manifestSelected) : new Set(legacyIgnored);
   const selected = mode === "manifest"
     ? manifestSelected.filter((path) => sourceIgnored.has(path))
-    : mode === "legacy" ? legacyIgnored.filter(isAllowed) : [];
+    : mode === "legacy" ? legacyIgnored.filter((path) => isAllowed(path) && !isGeneratedPath(path)) : [];
   const targetIgnored = await ignoredByTarget(target, selected);
   const userExcluded = await matchIgnorePatterns(selected, config.exclude);
   const actions: SyncAction[] = [];

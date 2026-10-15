@@ -1,10 +1,10 @@
 // Read-only removal checks: shared Scratchpad identity, environment drift, and Git cleanliness.
 
-import { lstatSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { scratchpadState, statIfPresent } from "./scratchpad.ts";
 import { readProvenance } from "./create.ts";
-import { isEnvFile, isExcluded, matchIgnorePatterns, readSyncConfig } from "./sync.ts";
+import { GENERATED_DIRS, isEnvFile, isExcluded, isGeneratedPath, matchIgnorePatterns, readSyncConfig, selectedByManifest } from "./sync.ts";
 import { runAsync } from "./term.ts";
 
 export interface SafetyFlag {
@@ -148,9 +148,8 @@ function* walkFiles(
   }
 }
 
-// The no-provenance env fallback walks the whole worktree; skip .git and the
-// heavy artifact dirs so the walk stays cheap.
-const WALK_SKIP = new Set([".scratchpad", ".git", "node_modules", ".next", ".turbo", "dist", ".cache", "build", ".build", "Pods", "DerivedData"]);
+// Explicit selections are checked separately, so discovery can prune heavy artifact trees.
+const WALK_SKIP = new Set<string>([".scratchpad", ".git", ...GENERATED_DIRS]);
 
 function readIfExists(path: string): string | null {
   try {
@@ -188,13 +187,23 @@ export async function runSafetyPipeline(
     flags.push({ kind: "scratchpad-conflict", detail: "Scratchpad migration is incomplete; retain this worktree and resume conversion" });
   }
 
-  // 3. env drift — prefer the provenance marker's synced list, fall back to a walk
+  // Source env created after setup still needs protection, even when nothing was synced.
+  const config = readSyncConfig(opts.env);
   const marker = readProvenance(wtPath);
-  let candidates = marker
-    ? marker.syncedFiles.filter((path) => isEnvFile(path) && path !== ".scratchpad" && !path.startsWith(".scratchpad/"))
-    : [...walkFiles(wtPath, wtPath, (name) => WALK_SKIP.has(name))].filter(isEnvFile);
+  let candidates = [...walkFiles(wtPath, wtPath, (name) => WALK_SKIP.has(name))].filter(isEnvFile);
+  if (marker) {
+    candidates.push(...marker.syncedFiles.filter(isEnvFile));
+    // Older markers cannot prove whether a generated path was deliberately selected.
+    if (marker.sync?.mode === "legacy") candidates = candidates.filter((path) => !isGeneratedPath(path));
+  }
+  // Sync can adopt a new manifest after creation. Check both current policies
+  // against lane files so even selections now absent from the primary survive.
+  for (const root of new Set([repoRoot, wtPath])) {
+    const manifestPath = join(root, ".worktreeinclude");
+    if (existsSync(manifestPath)) candidates.push(...(await selectedByManifest(wtPath, manifestPath)).filter(isEnvFile));
+  }
   candidates = candidates.filter((path) => !isExcluded(path));
-  const userExcludes = readSyncConfig(opts.env).exclude;
+  const userExcludes = config.exclude;
   if (userExcludes.length > 0) {
     const userExcluded = await matchIgnorePatterns(candidates, userExcludes);
     candidates = candidates.filter((path) => !userExcluded.has(path));

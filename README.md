@@ -139,6 +139,7 @@ Task evidence should use canonical paths and identify its source branch/SHA. Rel
 - a shared `.scratchpad` link must resolve to the same directory as the primary's `.scratchpad`; the check does not traverse shared content
 - an existing local Scratchpad, unexpected link, or unfinished migration blocks removal; use `wt scratchpad` to reconcile and convert it
 - env files (`.env`, `.env.*`, `.dev.vars` — never `*.example` or `*.sample`) block removal only when the lane holds a `KEY=value` the primary lacks (or a differing value). Primary-superset drift, comments, ordering, and a simple value written with or without enclosing quotes are lossless and do not block. Drift is reported as key **names** only; values are never printed. Reconcile with `wt sync` in the intended direction before rerunning
+- generated env under known artifact directories is skipped by default, matching legacy sync. Recorded manifest selections and current primary/lane `.worktreeinclude` selections remain protected. A legacy marker uses the generated-output defaults; an older marker without a sync mode retains its recorded env evidence conservatively. Source env created after setup is checked even when the marker lists no copied files
 - dirty or status-unreadable worktrees block removal
 - `wt rm` refuses a worktree that contains the caller's current directory
 - initialized submodules must be clean (no changes, untracked, or ignored files); removal then runs `git submodule deinit --all`, restores the primary's submodule config that deinit clears, and retains the lane's submodule Git data under the primary's `.git/wt-submodules-*`
@@ -192,6 +193,8 @@ Without `.worktreeinclude`, wt 2.x retains the legacy config allowlist and print
 - **Scratchpad**: `.scratchpad/`
 - **Editor**: `.vscode/`, `.idea/`, `.zed/`
 - **Agent**: `.claude/` except `.claude/worktrees`
+
+Legacy defaults skip paths beneath `node_modules`, `.next`, `.turbo`, `dist`, `.cache`, `build`, `.build`, `Pods`, `DerivedData`, `.alchemy`, and `.wrangler`, including generated `.dev.vars`. Source `.dev.vars` outside those directories still syncs and receives env-drift protection. These are directory-name matches, not prefixes: `buildings/.env` remains source config. Explicit manifest selections can include those directories and remain protected during removal.
 
 Set `sync.requireInclude = true` to copy nothing from repositories without a manifest. User exclusions are subtractive and use the same pattern syntax:
 

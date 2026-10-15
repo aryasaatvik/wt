@@ -62,6 +62,48 @@ describe("isExcluded", () => {
 });
 
 describe("sync planner", () => {
+  test("legacy sync skips known generated env while preserving source env", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write(".gitignore", ".env\n.env.*\n.dev.vars\nnode_modules/\n.next/\n.turbo/\ndist/\n.cache/\nbuild/\n.build/\nPods/\nDerivedData/\n.alchemy/\n.wrangler/\n");
+      repo.commit("ignores");
+      const target = repo.addWorktree("lane", { branch: "lane" });
+      const generated = ["node_modules/pkg/.env", ".next/.env", ".turbo/.env", "dist/.env", ".cache/.env", "build/.env", ".build/.env", "Pods/.env", "DerivedData/.env", "apps/web/.alchemy/worker/.dev.vars", "apps/web/.wrangler/state/.dev.vars"];
+      const source = [".env", "apps/web/.dev.vars", "buildings/.env", "apps/web/.alchemy-config/.dev.vars"];
+      for (const path of [...generated, ...source]) repo.write(path, "SOURCE=1\n");
+
+      const plan = await planSync(repo.dir, target, { config: { requireInclude: false, exclude: [] } });
+      expect(plan.mode).toBe("legacy");
+      expect(plan.actions.filter((action) => action.status === "copy").map((action) => action.path)).toEqual(source.toSorted());
+      await applySyncPlan(plan);
+      for (const path of generated) expect(existsSync(join(target, path))).toBe(false);
+      for (const path of source) expect(readFileSync(join(target, path), "utf8")).toBe("SOURCE=1\n");
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("manifest sync preserves deliberate generated env selections", async () => {
+    const repo = makeRepo();
+    try {
+      repo.write(".gitignore", ".alchemy/\nnode_modules/\n");
+      repo.write(".worktreeinclude", ".alchemy/**\nnode_modules/**\n");
+      repo.commit("explicit generated selections");
+      const target = repo.addWorktree("lane", { branch: "lane" });
+      repo.write(".alchemy/worker/.dev.vars", "SELECTED=1\n");
+      repo.write("node_modules/tool/.env", "SELECTED=1\n");
+      const plan = await planSync(repo.dir, target, { config: { requireInclude: false, exclude: [] } });
+      expect(plan.actions.map((action) => [action.path, action.status])).toEqual([
+        [".alchemy/worker/.dev.vars", "copy"],
+        ["node_modules/tool/.env", "copy"],
+      ]);
+      await applySyncPlan(plan);
+      expect(readFileSync(join(target, ".alchemy/worker/.dev.vars"), "utf8")).toBe("SELECTED=1\n");
+    } finally {
+      repo.rm();
+    }
+  });
+
   test("uses gitignore-style manifests, target ignores, conflicts, and hard exclusions", async () => {
     const repo = makeRepo();
     try {
