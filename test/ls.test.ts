@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { cmdLs, discoverPrimaries, humanAge, humanSize, renderTable, sizeLabel } from "../src/ls.ts";
+import {
+  cmdLs,
+  discoverPrimaries,
+  humanAge,
+  humanSize,
+  renderTable,
+  sizeLabel,
+} from "../src/ls.ts";
 import type { WorktreeStatus } from "../src/scan.ts";
 import { makeRepo } from "./harness.ts";
 
@@ -66,7 +73,14 @@ describe("renderTable", () => {
     const out = renderTable(
       [
         record({ slug: "repo", primary: true, branch: "main" }),
-        record({ slug: "feat-x", dirty: true, dirtyCount: 3, ahead: 2, prState: "open", prNumber: 4 }),
+        record({
+          slug: "feat-x",
+          dirty: true,
+          dirtyCount: 3,
+          ahead: 2,
+          prState: "open",
+          prNumber: 4,
+        }),
         record({ slug: "lane-1", branch: null, detached: true, prState: "unknown" }),
       ],
       now,

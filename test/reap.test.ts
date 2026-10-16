@@ -45,7 +45,10 @@ function conclusiveNoPrScan(repo: FixtureRepo) {
   mkdirSync(bin, { recursive: true });
   const gh = join(bin, "gh");
   const openPr = join(repo.root, "open-pr");
-  writeFileSync(gh, "#!/bin/sh\nif [ -f \"$WT_TEST_OPEN_PR\" ]; then printf '42\\topen\\n'; else printf '[]\\n'; fi\n");
+  writeFileSync(
+    gh,
+    "#!/bin/sh\nif [ -f \"$WT_TEST_OPEN_PR\" ]; then printf '42\\topen\\n'; else printf '[]\\n'; fi\n",
+  );
   chmodSync(gh, 0o755);
   repo.git("remote", "set-url", "origin", "https://github.com/acme/widgets.git");
   return { env: { PATH: `${bin}:/usr/bin:/bin`, WT_TEST_OPEN_PR: openPr }, openPr };
@@ -53,7 +56,7 @@ function conclusiveNoPrScan(repo: FixtureRepo) {
 
 describe("wt reap", () => {
   test("plans dispositions and --apply removes only the safe set", async () => {
-      const repo = makeRepo();
+    const repo = makeRepo();
     try {
       const lanes = await buildFixture(repo);
       const pr = conclusiveNoPrScan(repo);
@@ -99,15 +102,33 @@ describe("wt reap", () => {
       repo.addOrigin();
       const head = repo.git("rev-parse", "HEAD").trim();
       const clean = repo.addWorktree("lane-clean-module", { detachAt: head });
-      repo.gitIn(clean, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive");
+      repo.gitIn(
+        clean,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "update",
+        "--init",
+        "--recursive",
+      );
       const dirty = repo.addWorktree("lane-dirty-module", { detachAt: head });
-      repo.gitIn(dirty, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive");
+      repo.gitIn(
+        dirty,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "update",
+        "--init",
+        "--recursive",
+      );
       write(dirty, "vendor/module/untracked.txt", "keep\n");
       const pr = conclusiveNoPrScan(repo);
       const entries = await planReap({ all: false, cwd: repo.dir, scan: pr });
       expect(dispositionOf(entries, "lane-clean-module").disposition).toBe("remove");
       expect(dispositionOf(entries, "lane-dirty-module").disposition).toBe("skip");
-      expect(dispositionOf(entries, "lane-dirty-module").reasons.join(" ")).toContain("vendor/module");
+      expect(dispositionOf(entries, "lane-dirty-module").reasons.join(" ")).toContain(
+        "vendor/module",
+      );
 
       const applied = await applyReap(entries, { env: pr.env });
       expect(applied.removed.map((e) => e.record.slug)).toEqual(["lane-clean-module"]);
@@ -251,17 +272,24 @@ describe("wt reap", () => {
       const gh = join(bin, "gh");
       const oidFile = join(repo.root, "merge-oid");
       writeFileSync(oidFile, mergeOid);
-      writeFileSync(gh, `#!/bin/sh
+      writeFileSync(
+        gh,
+        `#!/bin/sh
 if [ "$1" = "pr" ]; then
   oid=$(cat "$WT_TEST_MERGE_OID_FILE")
   printf '[{"headRefName":"feat/merged","state":"MERGED","number":42,"mergeCommit":{"oid":"%s"}}]\\n' "$oid"
 else
   printf '42\\tmerged\\t%s\\n' "$(cat "$WT_TEST_MERGE_OID_FILE")"
 fi
-`);
+`,
+      );
       chmodSync(gh, 0o755);
       const env = { PATH: `${bin}:/usr/bin:/bin`, WT_TEST_MERGE_OID_FILE: oidFile };
-      const entries = await planReap({ all: false, cwd: repo.dir, scan: { env, sizeMode: "skip" } });
+      const entries = await planReap({
+        all: false,
+        cwd: repo.dir,
+        scan: { env, sizeMode: "skip" },
+      });
       const planned = dispositionOf(entries, "feat-merged");
       expect(planned.record.mergeCommit).toBe(mergeOid);
       expect(planned.verdict).toEqual({ kind: "CONTENT_LANDED", ref: mergeOid, total: 1 });

@@ -54,7 +54,7 @@ export async function pool<T, R>(
   limit: number,
   fn: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
-  const results: R[] = new Array(items.length);
+  const results: R[] = [];
   let next = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (next < items.length) {
@@ -84,7 +84,9 @@ export function spinner(message: string): { update(m: string): void; stop(): voi
     process.on("exit", () => process.stderr.write("\x1b[?25h"));
   }
   const timer = setInterval(() => {
-    process.stderr.write(`\r\x1b[K  ${cyan(SPINNER_FRAMES[frame++ % SPINNER_FRAMES.length]!)} ${text}`);
+    process.stderr.write(
+      `\r\x1b[K  ${cyan(SPINNER_FRAMES[frame++ % SPINNER_FRAMES.length]!)} ${text}`,
+    );
   }, 80);
   return {
     update(m: string) {

@@ -85,7 +85,11 @@ export function originDefault(cwd: string): string | null {
   const ref = run(["git", "-C", cwd, "symbolic-ref", "refs/remotes/origin/HEAD"]).trim();
   if (ref) return ref.replace(/^refs\/remotes\/origin\//, "");
   for (const cand of ["main", "master", "dev"]) {
-    if (Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", `origin/${cand}`]).exitCode === 0) return cand;
+    if (
+      Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", `origin/${cand}`])
+        .exitCode === 0
+    )
+      return cand;
   }
   return null;
 }
@@ -96,7 +100,10 @@ export function defaultBase(cwd: string): string | null {
   if (originHead) {
     const name = originHead.replace(/^refs\/remotes\/origin\//, "");
     const remote = `origin/${name}`;
-    if (Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", `refs/remotes/${remote}`]).exitCode === 0) {
+    if (
+      Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", `refs/remotes/${remote}`])
+        .exitCode === 0
+    ) {
       return `refs/remotes/${remote}`;
     }
   }
@@ -104,7 +111,17 @@ export function defaultBase(cwd: string): string | null {
     if (branchExists(cwd, candidate)) return candidate;
   }
   for (const candidate of ["main", "master", "dev"]) {
-    if (Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--verify", "-q", `refs/remotes/origin/${candidate}`]).exitCode === 0) {
+    if (
+      Bun.spawnSync([
+        "git",
+        "-C",
+        cwd,
+        "rev-parse",
+        "--verify",
+        "-q",
+        `refs/remotes/origin/${candidate}`,
+      ]).exitCode === 0
+    ) {
       return `refs/remotes/origin/${candidate}`;
     }
   }
@@ -128,10 +145,14 @@ export interface CreateSource {
 export function resolveCreateSource(cwd: string, branch: string, base?: string): CreateSource {
   const local = `refs/heads/${branch}`;
   const remote = `refs/remotes/origin/${branch}`;
-  const hasRemote = Bun.spawnSync(["git", "-C", cwd, "show-ref", "--verify", "--quiet", remote]).exitCode === 0;
+  const hasRemote =
+    Bun.spawnSync(["git", "-C", cwd, "show-ref", "--verify", "--quiet", remote]).exitCode === 0;
   const kind = branchExists(cwd, branch) ? "local" : hasRemote ? "origin" : "base";
-  const ref = kind === "local" ? local : kind === "origin" ? remote : base ?? defaultBase(cwd);
-  if (!ref) throw new Error("cannot determine a default base (set origin/HEAD, create main/master/dev, or pass a base explicitly)");
+  const ref = kind === "local" ? local : kind === "origin" ? remote : (base ?? defaultBase(cwd));
+  if (!ref)
+    throw new Error(
+      "cannot determine a default base (set origin/HEAD, create main/master/dev, or pass a base explicitly)",
+    );
   const head = run(["git", "-C", cwd, "rev-parse", "--verify", `${ref}^{commit}`]).trim();
   if (!head) throw new Error(`cannot resolve worktree source ${ref}`);
   return { kind, ref, head };

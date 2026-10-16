@@ -12,17 +12,22 @@ interface DuOptions {
 }
 
 function canonical(path: string): string {
-  try { return realpathSync.native(path); } catch { return resolve(path); }
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return resolve(path);
+  }
 }
 
 /** Resolve a branch, directory name, or path to the owning worktree path. */
 function resolveTargetPath(cwd: string, target: string): string {
   const candidate = resolve(cwd, target);
   const canonicalCandidate = existsSync(candidate) ? canonical(candidate) : null;
-  const record = listWorktrees(cwd).find((item) =>
-    item.branch === target
-    || basename(item.path) === target
-    || (canonicalCandidate !== null && canonical(item.path) === canonicalCandidate),
+  const record = listWorktrees(cwd).find(
+    (item) =>
+      item.branch === target ||
+      basename(item.path) === target ||
+      (canonicalCandidate !== null && canonical(item.path) === canonicalCandidate),
   );
   if (!record) throw new Error(`worktree not found: ${target}`);
   return record.path;
@@ -30,16 +35,19 @@ function resolveTargetPath(cwd: string, target: string): string {
 
 function renderDiskTable(records: WorktreeDiskReport[]): string {
   const header = "WORKTREE\tCHECKOUT\tPRIVATE GIT\tOWNED\tSHARED";
-  return [header, ...records.map((record) => {
-    const usage = record.usage;
-    return [
-      record.primary ? `${basename(record.path)} (primary)` : basename(record.path),
-      humanSize(usage?.checkoutKb ?? null),
-      humanSize(usage?.privateGitKb ?? null),
-      humanSize(usage?.ownedKb ?? null),
-      humanSize(usage?.sharedKb ?? null),
-    ].join("\t");
-  })].join("\n");
+  return [
+    header,
+    ...records.map((record) => {
+      const usage = record.usage;
+      return [
+        record.primary ? `${basename(record.path)} (primary)` : basename(record.path),
+        humanSize(usage?.checkoutKb ?? null),
+        humanSize(usage?.privateGitKb ?? null),
+        humanSize(usage?.ownedKb ?? null),
+        humanSize(usage?.sharedKb ?? null),
+      ].join("\t");
+    }),
+  ].join("\n");
 }
 
 export async function cmdDu(options: DuOptions): Promise<string> {

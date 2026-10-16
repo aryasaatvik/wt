@@ -12,5 +12,6 @@
     "noEmit": true,
     "verbatimModuleSyntax": true,
     "noUncheckedIndexedAccess": false
-  }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "*.config.ts"]
 }

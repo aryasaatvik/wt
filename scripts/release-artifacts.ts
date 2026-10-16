@@ -22,7 +22,9 @@ if (requestedTag === "--help" || requestedTag === "-h") {
 }
 
 if (requestedTag && requestedTag !== expectedTag) {
-  console.error(`Release tag must match package.json version: expected ${expectedTag}, got ${requestedTag}`);
+  console.error(
+    `Release tag must match package.json version: expected ${expectedTag}, got ${requestedTag}`,
+  );
   process.exit(1);
 }
 
@@ -38,7 +40,11 @@ function run(command: string, args: ReadonlyArray<string>) {
 }
 
 function capture(command: string, args: ReadonlyArray<string>) {
-  const result = spawnSync(command, args, { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+  const result = spawnSync(command, args, {
+    cwd: repoRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
   return result.stdout.trim();
@@ -71,9 +77,8 @@ if (status) {
 // --os/--cpu '*': fetch native deps for every platform so cross-compiled
 // binaries (opentui) link correctly.
 run("bun", ["install", "--frozen-lockfile", "--os", "*", "--cpu", "*"]);
-run("bun", ["run", "typecheck"]);
-run("bun", ["test"]);
-run("bun", ["scripts/build-release-artifacts.ts"]);
+// A failed check exits in run(), before any tag, release, or upload.
+run("bun", ["run", "release:check"]);
 
 const artifactNames = (await readdir(releaseRoot)).filter(
   (name) => name.endsWith(".tar.gz") || name === "SHA256SUMS",
@@ -101,4 +106,10 @@ if (!succeeds("gh", ["release", "view", tag])) {
   run("gh", ["release", "create", tag, "--title", tag, "--generate-notes"]);
 }
 
-run("gh", ["release", "upload", tag, ...artifactNames.map((n) => join(releaseRoot, n)), "--clobber"]);
+run("gh", [
+  "release",
+  "upload",
+  tag,
+  ...artifactNames.map((n) => join(releaseRoot, n)),
+  "--clobber",
+]);

@@ -49,19 +49,36 @@ export async function removeLane(
     return { removed: false, status: `skipped ${slug}: [${first.kind}] ${first.detail}${more}` };
   }
   const rm = await removeWorktree(path, repoRoot, submodules.paths);
-  if (!rm.ok) return { removed: false, status: `failed: ${rm.reason.split("\n")[0] || "git worktree remove error"}` };
+  if (!rm.ok)
+    return {
+      removed: false,
+      status: `failed: ${rm.reason.split("\n")[0] || "git worktree remove error"}`,
+    };
   const retained = rm.retained ? ` · submodule Git data retained at ${rm.retained}` : "";
   return { removed: true, status: `removed ${slug}${retained}` };
 }
 
 export async function runPicker(opts: PickerOptions): Promise<void> {
   // Imported lazily so table/JSON paths never pay for opentui.
-  const { createCliRenderer, TextRenderable, ScrollBoxRenderable, StyledText, fg, bg, bold: b } =
-    await import("@opentui/core");
+  const {
+    createCliRenderer,
+    TextRenderable,
+    ScrollBoxRenderable,
+    StyledText,
+    fg,
+    bg,
+    bold: b,
+  } = await import("@opentui/core");
 
   // Same palette as lsdev's TUI.
-  const GREEN = "#4ade80", YELLOW = "#facc15", CYAN = "#67e8f9", RED = "#f87171";
-  const TEXT = "#d1d5db", BRIGHT = "#e5e7eb", MUTED = "#6b7280", SEL_BG = "#1f2937";
+  const GREEN = "#4ade80",
+    YELLOW = "#facc15",
+    CYAN = "#67e8f9",
+    RED = "#f87171";
+  const TEXT = "#d1d5db",
+    BRIGHT = "#e5e7eb",
+    MUTED = "#6b7280",
+    SEL_BG = "#1f2937";
 
   const repoRoot = resolvePrimaryRepo(opts.cwd);
   let showVerdicts = Boolean(opts.verdicts);
@@ -74,10 +91,30 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
   const renderer: CliRenderer = await createCliRenderer();
 
   const header = new TextRenderable(renderer, { id: "header", content: "", flexShrink: 0 });
-  const colhead = new TextRenderable(renderer, { id: "colhead", content: "", fg: MUTED, flexShrink: 0 });
-  const scroll = new ScrollBoxRenderable(renderer, { id: "list", flexGrow: 1, flexShrink: 1, minHeight: 3 });
-  const detail = new TextRenderable(renderer, { id: "detail", content: "", fg: MUTED, flexShrink: 0 });
-  const footer = new TextRenderable(renderer, { id: "footer", content: "", fg: MUTED, flexShrink: 0 });
+  const colhead = new TextRenderable(renderer, {
+    id: "colhead",
+    content: "",
+    fg: MUTED,
+    flexShrink: 0,
+  });
+  const scroll = new ScrollBoxRenderable(renderer, {
+    id: "list",
+    flexGrow: 1,
+    flexShrink: 1,
+    minHeight: 3,
+  });
+  const detail = new TextRenderable(renderer, {
+    id: "detail",
+    content: "",
+    fg: MUTED,
+    flexShrink: 0,
+  });
+  const footer = new TextRenderable(renderer, {
+    id: "footer",
+    content: "",
+    fg: MUTED,
+    flexShrink: 0,
+  });
   renderer.root.add(header);
   renderer.root.add(colhead);
   renderer.root.add(scroll);
@@ -121,14 +158,18 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       S("  " + pad(branchLabel(r), w.branch), r.detached ? YELLOW : TEXT),
       S("  " + pad(dirtyLabel(r), w.dirty), r.dirty ? RED : MUTED),
       S("  " + pad(aheadBehindLabel(r), w.ab), TEXT),
-      S("  " + pad(prLabel(r), w.pr), r.prState === "open" ? CYAN : r.prState === "merged" ? GREEN : MUTED),
+      S(
+        "  " + pad(prLabel(r), w.pr),
+        r.prState === "open" ? CYAN : r.prState === "merged" ? GREEN : MUTED,
+      ),
       S("  " + pad(sizeLabel(r), w.size), TEXT),
       S("  " + pad(humanAge(r.lastCommitAt), w.age), MUTED),
     ];
     if (showVerdicts) chunks.push(S("  " + pad(r.verdict ?? "-", w.verdict), MUTED));
     if (sel) {
       const used = chunks.reduce((n, ch) => n + ch.text.length, 0);
-      if (used < renderer.terminalWidth) chunks.push(S(" ".repeat(renderer.terminalWidth - used), TEXT));
+      if (used < renderer.terminalWidth)
+        chunks.push(S(" ".repeat(renderer.terminalWidth - used), TEXT));
     }
     return new StyledText(chunks);
   }
@@ -145,7 +186,11 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       (showVerdicts ? `  ${pad("VERDICT", w.verdict)}` : "");
 
     while (rowTexts.length < Math.max(records.length, 1)) {
-      const tr = new TextRenderable(renderer, { id: `row-${rowTexts.length}`, height: 1, flexShrink: 0 });
+      const tr = new TextRenderable(renderer, {
+        id: `row-${rowTexts.length}`,
+        height: 1,
+        flexShrink: 0,
+      });
       rowTexts.push(tr);
       scroll.add(tr);
     }

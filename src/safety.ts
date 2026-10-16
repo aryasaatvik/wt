@@ -4,7 +4,15 @@ import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from "
 import { join, relative } from "node:path";
 import { scratchpadState, statIfPresent } from "./scratchpad.ts";
 import { readProvenance } from "./create.ts";
-import { GENERATED_DIRS, isEnvFile, isExcluded, isGeneratedPath, matchIgnorePatterns, readSyncConfig, selectedByManifest } from "./sync.ts";
+import {
+  GENERATED_DIRS,
+  isEnvFile,
+  isExcluded,
+  isGeneratedPath,
+  matchIgnorePatterns,
+  readSyncConfig,
+  selectedByManifest,
+} from "./sync.ts";
 import { runAsync } from "./term.ts";
 
 export interface SafetyFlag {
@@ -37,7 +45,11 @@ export function envKeys(content: string): Set<string> {
  * Compare an env file across worktree and primary; returns a names-only
  * description of the drift, or null when contents are byte-identical.
  */
-export function describeEnvDrift(rel: string, wtContent: string, primaryContent: string | null): string | null {
+export function describeEnvDrift(
+  rel: string,
+  wtContent: string,
+  primaryContent: string | null,
+): string | null {
   if (primaryContent !== null && wtContent === primaryContent) return null;
   if (primaryContent === null) {
     return `${rel}: missing in primary (${envKeys(wtContent).size} keys)`;
@@ -159,8 +171,17 @@ function readIfExists(path: string): string | null {
   }
 }
 
-async function inspectHiddenTrackedEnv(wtPath: string, path: string, mode: string, blob: string, skipWorktree: boolean): Promise<SafetyFlag | null> {
-  const unreadable: SafetyFlag = { kind: "status-unreadable", detail: `cannot inspect saved tracked env: ${path}` };
+async function inspectHiddenTrackedEnv(
+  wtPath: string,
+  path: string,
+  mode: string,
+  blob: string,
+  skipWorktree: boolean,
+): Promise<SafetyFlag | null> {
+  const unreadable: SafetyFlag = {
+    kind: "status-unreadable",
+    detail: `cannot inspect saved tracked env: ${path}`,
+  };
   const saved = await runAsync(["git", "-C", wtPath, "cat-file", "-e", `${blob}^{blob}`]);
   if (!saved.ok) return unreadable;
   try {
@@ -170,27 +191,47 @@ async function inspectHiddenTrackedEnv(wtPath: string, path: string, mode: strin
     let hash: string;
     if (mode === "120000" && stat.isSymbolicLink()) {
       const result = Bun.spawnSync(["git", "-C", wtPath, "hash-object", "--stdin"], {
-        stdin: Buffer.from(readlinkSync(join(wtPath, path))), stdout: "pipe", stderr: "pipe",
+        stdin: Buffer.from(readlinkSync(join(wtPath, path))),
+        stdout: "pipe",
+        stderr: "pipe",
       });
       if (!result.success) return unreadable;
       hash = result.stdout.toString().trim();
     } else if ((mode === "100644" || mode === "100755" || mode === "120000") && stat.isFile()) {
       let conversion = ["--path", path];
       if (mode === "120000") {
-        const symlinks = await runAsync(["git", "-C", wtPath, "config", "--type=bool", "--get", "core.symlinks"]);
+        const symlinks = await runAsync([
+          "git",
+          "-C",
+          wtPath,
+          "config",
+          "--type=bool",
+          "--get",
+          "core.symlinks",
+        ]);
         if (symlinks.ok && symlinks.stdout.trim() === "false") conversion = ["--no-filters"];
         else if (symlinks.code === 1 || (symlinks.ok && symlinks.stdout.trim() === "true")) {
           return { kind: "dirty", detail: `tracked env type differs from index: ${path}` };
         } else return unreadable;
       }
       // Regular blobs use Git's clean conversion; emulated links contain raw link text.
-      const result = await runAsync(["git", "-C", wtPath, "hash-object", ...conversion, "--", path]);
+      const result = await runAsync([
+        "git",
+        "-C",
+        wtPath,
+        "hash-object",
+        ...conversion,
+        "--",
+        path,
+      ]);
       if (!result.ok) return unreadable;
       hash = result.stdout.trim();
     } else {
       return { kind: "dirty", detail: `tracked env type differs from index: ${path}` };
     }
-    return hash === blob ? null : { kind: "dirty", detail: `tracked env differs from index: ${path}` };
+    return hash === blob
+      ? null
+      : { kind: "dirty", detail: `tracked env differs from index: ${path}` };
   } catch {
     return unreadable;
   }
@@ -204,7 +245,14 @@ export async function runSafetyPipeline(
   const flags: SafetyFlag[] = [];
 
   // 1. dirty — fail closed if status is unreadable
-  const status = await runAsync(["git", "--no-optional-locks", "-C", wtPath, "status", "--porcelain"]);
+  const status = await runAsync([
+    "git",
+    "--no-optional-locks",
+    "-C",
+    wtPath,
+    "status",
+    "--porcelain",
+  ]);
   if (!status.ok) {
     flags.push({ kind: "status-unreadable", detail: status.stderr.trim() });
   } else if (status.stdout.trim()) {
@@ -214,14 +262,29 @@ export async function runSafetyPipeline(
 
   // Shared storage is checked by identity, never by scanning canonical contents.
   const scratchpad = scratchpadState(repoRoot, wtPath);
-  if (scratchpad.kind === "invalid") flags.push({ kind: "scratchpad-conflict", detail: scratchpad.reason });
+  if (scratchpad.kind === "invalid")
+    flags.push({ kind: "scratchpad-conflict", detail: scratchpad.reason });
   if (scratchpad.kind === "legacy") {
-    flags.push({ kind: "scratchpad-conflict", detail: "local .scratchpad requires reconciliation; preview with wt scratchpad <target> --json" });
+    flags.push({
+      kind: "scratchpad-conflict",
+      detail:
+        "local .scratchpad requires reconciliation; preview with wt scratchpad <target> --json",
+    });
   }
   const metadata = await runAsync(["git", "-C", wtPath, "rev-parse", "--absolute-git-dir"]);
-  if (!metadata.ok) flags.push({ kind: "status-unreadable", detail: "cannot inspect Scratchpad migration recovery" });
-  else if (statIfPresent(join(metadata.stdout.trim(), "wt-scratchpad-original")) || statIfPresent(join(metadata.stdout.trim(), "wt-scratchpad-migration.lock"))) {
-    flags.push({ kind: "scratchpad-conflict", detail: "Scratchpad migration is incomplete; retain this worktree and resume conversion" });
+  if (!metadata.ok)
+    flags.push({
+      kind: "status-unreadable",
+      detail: "cannot inspect Scratchpad migration recovery",
+    });
+  else if (
+    statIfPresent(join(metadata.stdout.trim(), "wt-scratchpad-original")) ||
+    statIfPresent(join(metadata.stdout.trim(), "wt-scratchpad-migration.lock"))
+  ) {
+    flags.push({
+      kind: "scratchpad-conflict",
+      detail: "Scratchpad migration is incomplete; retain this worktree and resume conversion",
+    });
   }
 
   // Source env created after setup still needs protection, even when nothing was synced.
@@ -231,18 +294,30 @@ export async function runSafetyPipeline(
   if (marker) {
     candidates.push(...marker.syncedFiles.filter(isEnvFile));
     // Older markers cannot prove whether a generated path was deliberately selected.
-    if (marker.sync?.mode === "legacy") candidates = candidates.filter((path) => !isGeneratedPath(path));
+    if (marker.sync?.mode === "legacy")
+      candidates = candidates.filter((path) => !isGeneratedPath(path));
   }
   // Sync can adopt a new manifest after creation. Check both current policies
   // against lane files so even selections now absent from the primary survive.
   for (const root of new Set([repoRoot, wtPath])) {
     const manifestPath = join(root, ".worktreeinclude");
-    if (existsSync(manifestPath)) candidates.push(...(await selectedByManifest(wtPath, manifestPath)).filter(isEnvFile));
+    if (existsSync(manifestPath))
+      candidates.push(...(await selectedByManifest(wtPath, manifestPath)).filter(isEnvFile));
   }
   // Index flags can hide local edits from status. Compare those paths with the
   // saved blob without refreshing the index or changing its flags.
-  const tracked = await runAsync(["git", "-C", wtPath, "ls-files", "--cached", "--stage", "-v", "-z"]);
-  if (!tracked.ok) flags.push({ kind: "status-unreadable", detail: "cannot inspect tracked env ownership" });
+  const tracked = await runAsync([
+    "git",
+    "-C",
+    wtPath,
+    "ls-files",
+    "--cached",
+    "--stage",
+    "-v",
+    "-z",
+  ]);
+  if (!tracked.ok)
+    flags.push({ kind: "status-unreadable", detail: "cannot inspect tracked env ownership" });
   else {
     const trackedPaths = new Set<string>();
     for (const entry of tracked.stdout.split("\0").filter(Boolean)) {
@@ -257,7 +332,13 @@ export async function runSafetyPipeline(
       const path = match[4]!;
       trackedPaths.add(path);
       if (isEnvFile(path) && (tag === "S" || tag !== tag.toUpperCase())) {
-        const hidden = await inspectHiddenTrackedEnv(wtPath, path, mode, blob, tag.toUpperCase() === "S");
+        const hidden = await inspectHiddenTrackedEnv(
+          wtPath,
+          path,
+          mode,
+          blob,
+          tag.toUpperCase() === "S",
+        );
         if (hidden) flags.push(hidden);
       }
     }

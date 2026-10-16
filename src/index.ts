@@ -210,25 +210,41 @@ if (command === "scratchpad") {
   let json = false;
   for (let i = 2; i < args.length; i++) {
     if (args[i] === "--json") json = true;
-    else if (args[i] === "--apply" && args[i + 1] && !args[i + 1]!.startsWith("--")) apply = args[++i];
-    else { err(`unknown or incomplete scratchpad option: ${args[i]}`); process.exit(1); }
+    else if (args[i] === "--apply" && args[i + 1] && !args[i + 1]!.startsWith("--"))
+      apply = args[++i];
+    else {
+      err(`unknown or incomplete scratchpad option: ${args[i]}`);
+      process.exit(1);
+    }
   }
-  if (!target || target.startsWith("--")) { err("wt scratchpad expects a worktree target"); process.exit(1); }
+  if (!target || target.startsWith("--")) {
+    err("wt scratchpad expects a worktree target");
+    process.exit(1);
+  }
   try {
-    const { planScratchpadMigration, applyScratchpadMigration } = await import("./scratchpad-migration.ts");
+    const { planScratchpadMigration, applyScratchpadMigration } =
+      await import("./scratchpad-migration.ts");
     if (apply) {
       const plan = await Bun.file(apply).json();
       const result = await applyScratchpadMigration(cwd, target, plan);
       console.log(json ? JSON.stringify(result) : `Shared Scratchpad: ${result.worktree}`);
     } else {
       const plan = await planScratchpadMigration(cwd, target);
-      console.log(json ? JSON.stringify(plan, null, 2) : [
-        `${plan.worktree}: ${plan.state}`,
-        ...plan.entries.filter((entry) => entry.status === "review").map((entry) => `review ${entry.kind} ${entry.path}`),
-        "Use --json to save a plan. Reconcile review entries into canonical storage before --apply <plan.json>.",
-      ].join("\n"));
+      console.log(
+        json
+          ? JSON.stringify(plan, null, 2)
+          : [
+              `${plan.worktree}: ${plan.state}`,
+              ...plan.entries
+                .filter((entry) => entry.status === "review")
+                .map((entry) => `review ${entry.kind} ${entry.path}`),
+              "Use --json to save a plan. Reconcile review entries into canonical storage before --apply <plan.json>.",
+            ].join("\n"),
+      );
     }
-  } catch (error) { exitFrom(error); }
+  } catch (error) {
+    exitFrom(error);
+  }
   process.exit(0);
 }
 
@@ -304,7 +320,9 @@ if (command === "rm" || command === "remove") {
   for (const a of rest.slice(1)) {
     if (a === "-D" || a === "--delete-branch") deleteBranch = true;
     else {
-      console.error(`unknown flag for wt rm: ${a} (wt never passes flags through to git worktree remove)`);
+      console.error(
+        `unknown flag for wt rm: ${a} (wt never passes flags through to git worktree remove)`,
+      );
       process.exit(1);
     }
   }
@@ -330,7 +348,13 @@ if (rest.length > 1 && !rest[1]!.startsWith("-")) {
   flagStart = 2;
 }
 try {
-  await cmdNew(branch, base, { verbose, install, postInstall, cwd, extraFlags: rest.slice(flagStart) });
+  await cmdNew(branch, base, {
+    verbose,
+    install,
+    postInstall,
+    cwd,
+    extraFlags: rest.slice(flagStart),
+  });
 } catch (e) {
   exitFrom(e);
 }

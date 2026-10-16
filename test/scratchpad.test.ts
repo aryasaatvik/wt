@@ -1,5 +1,14 @@
 import { expect, test } from "bun:test";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { cmdNew } from "../src/create.ts";
 import { cmdRm } from "../src/rm.ts";
@@ -31,7 +40,9 @@ test("new worktrees share writes, remain clean and remove without archiving cano
     expect(readFileSync(join(second, ".scratchpad/note.md"), "utf8")).toBe("shared update\n");
     expect(existsSync(join(repo.dir, ".scratchpad/archive"))).toBe(false);
     expect(repo.git("branch", "--list", "first")).toContain("first");
-  } finally { repo.rm(); }
+  } finally {
+    repo.rm();
+  }
 });
 
 test("sync excludes Scratchpad even when explicitly selected and forced", async () => {
@@ -47,7 +58,9 @@ test("sync excludes Scratchpad even when explicitly selected and forced", async 
     expect(plan.actions).toEqual([]);
     expect(await applySyncPlan(plan)).toEqual([]);
     expect(lstatSync(join(lane, ".scratchpad")).isSymbolicLink()).toBe(true);
-  } finally { repo.rm(); }
+  } finally {
+    repo.rm();
+  }
 });
 
 test("a primary link to external storage supports creation, shared writes and safe removal", async () => {
@@ -57,7 +70,12 @@ test("a primary link to external storage supports creation, shared writes and sa
     mkdirSync(storage);
     symlinkSync(storage, join(repo.dir, ".scratchpad"));
     writeFileSync(join(storage, "note.md"), "canonical");
-    const lane = await cmdNew("lane", "main", { cwd: repo.dir, verbose: false, install: false, extraFlags: [] });
+    const lane = await cmdNew("lane", "main", {
+      cwd: repo.dir,
+      verbose: false,
+      install: false,
+      extraFlags: [],
+    });
     expect(scratchpadState(repo.dir, lane)).toEqual({ kind: "shared" });
     expect(realpathSync(join(lane, ".scratchpad"))).toBe(storage);
     writeFileSync(join(lane, ".scratchpad/note.md"), "shared update");
@@ -68,22 +86,32 @@ test("a primary link to external storage supports creation, shared writes and sa
     expect(existsSync(lane)).toBe(false);
     expect(lstatSync(join(repo.dir, ".scratchpad")).isSymbolicLink()).toBe(true);
     expect(readFileSync(join(storage, "note.md"), "utf8")).toBe("shared update");
-  } finally { repo.rm(); }
+  } finally {
+    repo.rm();
+  }
 });
 
-test.each(["missing", "file", "cycle", "not-directory"])("invalid primary link (%s) blocks setup and removal", async (target) => {
-  const repo = makeRepo();
-  try {
-    repo.write("file", "not a directory");
-    const destination = target === "cycle" ? ".scratchpad" : target === "not-directory" ? "file/notes" : target;
-    symlinkSync(destination, join(repo.dir, ".scratchpad"));
-    const lane = repo.addWorktree("lane");
-    expect(scratchpadState(repo.dir, lane).kind).toBe("invalid");
-    await expect(ensureSharedScratchpad(repo.dir, lane)).rejects.toThrow("must resolve to a directory");
-    expect((await runSafetyPipeline(lane, repo.dir)).ok).toBe(false);
-    expect(lstatSync(join(repo.dir, ".scratchpad")).isSymbolicLink()).toBe(true);
-  } finally { repo.rm(); }
-});
+test.each(["missing", "file", "cycle", "not-directory"])(
+  "invalid primary link (%s) blocks setup and removal",
+  async (target) => {
+    const repo = makeRepo();
+    try {
+      repo.write("file", "not a directory");
+      const destination =
+        target === "cycle" ? ".scratchpad" : target === "not-directory" ? "file/notes" : target;
+      symlinkSync(destination, join(repo.dir, ".scratchpad"));
+      const lane = repo.addWorktree("lane");
+      expect(scratchpadState(repo.dir, lane).kind).toBe("invalid");
+      await expect(ensureSharedScratchpad(repo.dir, lane)).rejects.toThrow(
+        "must resolve to a directory",
+      );
+      expect((await runSafetyPipeline(lane, repo.dir)).ok).toBe(false);
+      expect(lstatSync(join(repo.dir, ".scratchpad")).isSymbolicLink()).toBe(true);
+    } finally {
+      repo.rm();
+    }
+  },
+);
 
 test("broken and foreign shared links veto removal without following them", async () => {
   const repo = makeRepo();
@@ -97,7 +125,9 @@ test("broken and foreign shared links veto removal without following them", asyn
     symlinkSync(repo.root, join(lane, ".scratchpad"));
     await expect(cmdRm("lane", { cwd: repo.dir, deleteBranch: false })).rejects.toThrow();
     expect(existsSync(lane)).toBe(true);
-  } finally { repo.rm(); }
+  } finally {
+    repo.rm();
+  }
 });
 
 test("sharing never replaces tracked or existing local Scratchpad content", async () => {
@@ -108,7 +138,9 @@ test("sharing never replaces tracked or existing local Scratchpad content", asyn
     const lane = repo.addWorktree("lane");
     await expect(ensureSharedScratchpad(repo.dir, lane)).rejects.toThrow("tracked");
     expect(readFileSync(join(lane, ".scratchpad/note.md"), "utf8")).toBe("tracked");
-  } finally { repo.rm(); }
+  } finally {
+    repo.rm();
+  }
 });
 
 test("shared Scratchpad bytes are charged to primary only", async () => {
@@ -119,7 +151,13 @@ test("shared Scratchpad bytes are charged to primary only", async () => {
     const before = await measureDiskUsage(repo.dir, "fresh");
     repo.write(".scratchpad/large.bin", "x".repeat(2 * 1024 * 1024));
     const after = await measureDiskUsage(repo.dir, "fresh");
-    expect(after.find((r) => r.path === lane)!.usage!.checkoutKb).toBe(before.find((r) => r.path === lane)!.usage!.checkoutKb);
-    expect(after.find((r) => r.primary)!.usage!.checkoutKb).toBeGreaterThan(before.find((r) => r.primary)!.usage!.checkoutKb + 1000);
-  } finally { repo.rm(); }
+    expect(after.find((r) => r.path === lane)!.usage!.checkoutKb).toBe(
+      before.find((r) => r.path === lane)!.usage!.checkoutKb,
+    );
+    expect(after.find((r) => r.primary)!.usage!.checkoutKb).toBeGreaterThan(
+      before.find((r) => r.primary)!.usage!.checkoutKb + 1000,
+    );
+  } finally {
+    repo.rm();
+  }
 });

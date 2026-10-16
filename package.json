@@ -2,22 +2,33 @@
   "name": "wt",
   "version": "2.0.0",
   "private": true,
-  "type": "module",
   "description": "Git worktree helper: create with gitignored-file sync and dep install, inspect, remove safely, reap merged lanes",
-  "engines": {
-    "bun": ">=1.3.0"
-  },
-  "devDependencies": {
-    "@types/bun": "^1.3.14",
-    "typescript": "^7.0.2"
-  },
+  "type": "module",
   "scripts": {
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint --deny-warnings .",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run test",
+    "build": "bun build src/index.ts --compile --outfile=dist/wt",
     "build:release-artifacts": "bun scripts/build-release-artifacts.ts",
-    "release": "bun scripts/release-artifacts.ts"
+    "test:artifact": "bun scripts/check-artifacts.ts",
+    "release:check": "bun run check && bun run build && bun run build:release-artifacts && bun run test:artifact",
+    "release:publish": "bun scripts/release-artifacts.ts",
+    "release": "bun run release:publish"
   },
   "dependencies": {
     "@opentui/core": "0.4.3"
-  }
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "oxfmt": "0.73.0",
+    "oxlint": "1.88.0",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "packageManager": "bun@1.4.3"
 }

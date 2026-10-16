@@ -21,13 +21,19 @@ function currentRoot(cwd: string): string {
   return realpathSync.native(root);
 }
 
-function resolveLane(cwd: string, value: string | undefined, fallback: "primary" | "current"): string {
+function resolveLane(
+  cwd: string,
+  value: string | undefined,
+  fallback: "primary" | "current",
+): string {
   const choice = value ?? fallback;
   if (choice === "primary") return resolvePrimaryRepo(cwd);
   if (choice === "current") return currentRoot(cwd);
   const path = resolve(cwd, choice);
   if (existsSync(path)) return realpathSync.native(path);
-  const lane = listWorktrees(cwd).find((worktree) => worktree.branch === choice || worktree.path === choice);
+  const lane = listWorktrees(cwd).find(
+    (worktree) => worktree.branch === choice || worktree.path === choice,
+  );
   if (!lane)
     throw new Error(
       `worktree not found: ${choice} (use a branch name, "primary", "current", or an exact path — not the worktree directory slug)`,
@@ -39,23 +45,31 @@ export function renderSyncPlan(plan: SyncPlan): string {
   const lines = [
     `sync ${plan.source} -> ${plan.target}`,
     `mode: ${plan.mode}`,
-    ...plan.actions.map((action) => `${action.status.padEnd(14)} ${action.path}${action.reason ? ` (${action.reason})` : ""}`),
+    ...plan.actions.map(
+      (action) =>
+        `${action.status.padEnd(14)} ${action.path}${action.reason ? ` (${action.reason})` : ""}`,
+    ),
     `copy ${plan.summary.copy}, identical ${plan.summary["skip-identical"]}, conflicts ${plan.summary.conflict}, excluded ${plan.summary.excluded}, missing ${plan.summary.missing}, bytes ${plan.bytesToCopy}`,
   ];
   return lines.join("\n");
 }
 
-export async function cmdSync(options: SyncCommandOptions): Promise<{ plan: SyncPlan; copied: string[] }> {
+export async function cmdSync(
+  options: SyncCommandOptions,
+): Promise<{ plan: SyncPlan; copied: string[] }> {
   const source = resolveLane(options.cwd, options.from, "primary");
   const target = resolveLane(options.cwd, options.to, "current");
   if (source === target) throw new Error("sync source and target resolve to the same worktree");
   const plan = await planSync(source, target, { force: options.force });
   if (!options.dryRun && plan.summary.conflict > 0) {
-    throw new Error(`${plan.summary.conflict} target conflict(s); inspect with --dry-run and retry with --force only if replacement is intended`);
+    throw new Error(
+      `${plan.summary.conflict} target conflict(s); inspect with --dry-run and retry with --force only if replacement is intended`,
+    );
   }
   if (!options.dryRun) {
     const primary = resolvePrimaryRepo(target);
-    if (target !== primary && scratchpadState(primary, target).kind !== "legacy") await ensureSharedScratchpad(primary, target);
+    if (target !== primary && scratchpadState(primary, target).kind !== "legacy")
+      await ensureSharedScratchpad(primary, target);
   }
   const copied = options.dryRun ? [] : await applySyncPlan(plan, options.verbose);
   return { plan, copied };

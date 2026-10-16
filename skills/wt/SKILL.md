@@ -168,12 +168,12 @@ something was skipped and needs a human.
 
 ## Options
 
-| Flag                | Description                                |
-| ------------------- | ------------------------------------------ |
+| Flag                | Description                               |
+| ------------------- | ----------------------------------------- |
 | `--verbose`         | Show detailed rsync file list during sync |
-| `--no-install`      | Skip dependency install                    |
-| `--no-post-install` | Skip the wt.toml post-install command      |
-| `-h`, `--help`      | Show help                                  |
+| `--no-install`      | Skip dependency install                   |
+| `--no-post-install` | Skip the wt.toml post-install command     |
+| `-h`, `--help`      | Show help                                 |
 
 ### Sync
 

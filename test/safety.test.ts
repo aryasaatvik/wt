@@ -1,9 +1,27 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { cmdRm } from "../src/rm.ts";
-import { describeEnvDrift, envDriftLosesContent, envDriftResolution, envKeys, parseEnvAssignments, runSafetyPipeline } from "../src/safety.ts";
+import {
+  describeEnvDrift,
+  envDriftLosesContent,
+  envDriftResolution,
+  envKeys,
+  parseEnvAssignments,
+  runSafetyPipeline,
+} from "../src/safety.ts";
 import { isEnvFile } from "../src/sync.ts";
 import { makeRepo, type FixtureRepo } from "./harness.ts";
 
@@ -100,9 +118,14 @@ describe("runSafetyPipeline", () => {
       writeIn(repo, wt, ".scratchpad/research/unique.md", "only in lane\n");
       const result = await runSafetyPipeline(wt, repo.dir);
       expect(result.ok).toBe(false);
-      const dest = join(repo.dir, ".scratchpad/archive/2026-07-15-worktree-salvage/lane/research/unique.md");
+      const dest = join(
+        repo.dir,
+        ".scratchpad/archive/2026-07-15-worktree-salvage/lane/research/unique.md",
+      );
       expect(existsSync(dest)).toBe(false);
-      expect(readFileSync(join(wt, ".scratchpad/research/unique.md"), "utf8")).toBe("only in lane\n");
+      expect(readFileSync(join(wt, ".scratchpad/research/unique.md"), "utf8")).toBe(
+        "only in lane\n",
+      );
     } finally {
       repo.rm();
     }
@@ -223,13 +246,35 @@ function configEnv(exclude: string[]): NodeJS.ProcessEnv {
   return { ...process.env, XDG_CONFIG_HOME: home };
 }
 
-function markerFiles(wt: string, repo: FixtureRepo, syncedFiles: string[], mode?: "legacy" | "manifest" | "none"): void {
+function markerFiles(
+  wt: string,
+  repo: FixtureRepo,
+  syncedFiles: string[],
+  mode?: "legacy" | "manifest" | "none",
+): void {
   const gitDir = repo.gitIn(wt, "rev-parse", "--absolute-git-dir").trim();
   const now = new Date().toISOString();
   writeFileSync(
     join(gitDir, "wt.json"),
-    JSON.stringify({ createdAt: now, updatedAt: now, branch: "lane", base: "main", phase: "ready", syncedFiles,
-      ...(mode ? { sync: { source: repo.dir, mode, manifestHash: null, copiedPaths: syncedFiles, copiedFiles: syncedFiles.length, copiedBytes: 0 } } : {}),
+    JSON.stringify({
+      createdAt: now,
+      updatedAt: now,
+      branch: "lane",
+      base: "main",
+      phase: "ready",
+      syncedFiles,
+      ...(mode
+        ? {
+            sync: {
+              source: repo.dir,
+              mode,
+              manifestHash: null,
+              copiedPaths: syncedFiles,
+              copiedFiles: syncedFiles.length,
+              copiedBytes: 0,
+            },
+          }
+        : {}),
     }) + "\n",
   );
 }
@@ -412,14 +457,17 @@ describe("runSafetyPipeline tracked env ownership", () => {
         writeIn(repo, wt, ".env.production", "SETTING=branch\n");
         repo.gitIn(wt, "add", "--", ".env.production");
         repo.gitIn(wt, "commit", "-m", "branch env");
-        if (mode !== "no marker") markerFiles(wt, repo, [".env.production"], mode === "old marker" ? undefined : mode);
+        if (mode !== "no marker")
+          markerFiles(wt, repo, [".env.production"], mode === "old marker" ? undefined : mode);
 
         expect(repo.gitIn(wt, "status", "--porcelain").trim()).toBe("");
         expect(await runSafetyPipeline(wt, repo.dir)).toEqual({ ok: true, flags: [] });
 
         writeIn(repo, wt, ".env.local", "LOCAL=unique\n");
         const local = await runSafetyPipeline(wt, repo.dir);
-        expect(local.flags).toEqual([{ kind: "env-drift", detail: ".env.local: missing in primary (1 keys)" }]);
+        expect(local.flags).toEqual([
+          { kind: "env-drift", detail: ".env.local: missing in primary (1 keys)" },
+        ]);
         expect(local.ok).toBe(false);
 
         writeIn(repo, wt, ".env.production", "SETTING=uncommitted\n");
@@ -445,7 +493,9 @@ describe("runSafetyPipeline generated env ownership", () => {
       repo.commit("select generated env explicitly");
       writeIn(repo, wt, "dist/worker/.dev.vars", "SELECTED=1\n");
       const result = await runSafetyPipeline(wt, repo.dir);
-      expect(result.flags.filter((flag) => flag.kind === "env-drift").map((flag) => flag.detail)).toEqual(["dist/worker/.dev.vars: missing in primary (1 keys)"]);
+      expect(
+        result.flags.filter((flag) => flag.kind === "env-drift").map((flag) => flag.detail),
+      ).toEqual(["dist/worker/.dev.vars: missing in primary (1 keys)"]);
       expect(result.ok).toBe(false);
     } finally {
       repo.rm();
@@ -456,18 +506,45 @@ describe("runSafetyPipeline generated env ownership", () => {
     test(`${mode ?? "no provenance"} skips generated env and retains unique source env`, async () => {
       const repo = makeRepo();
       try {
-        repo.write(".gitignore", ".env\n.dev.vars\nnode_modules/\n.next/\n.turbo/\ndist/\n.cache/\nbuild/\n.build/\nPods/\nDerivedData/\n.alchemy/\n.wrangler/\n");
+        repo.write(
+          ".gitignore",
+          ".env\n.dev.vars\nnode_modules/\n.next/\n.turbo/\ndist/\n.cache/\nbuild/\n.build/\nPods/\nDerivedData/\n.alchemy/\n.wrangler/\n",
+        );
         repo.commit("ignores");
         const wt = repo.addWorktree("lane", { branch: "lane" });
-        const generated = ["node_modules/pkg/.env", ".next/.env", ".turbo/.env", "dist/.env", ".cache/.env", "build/.env", ".build/.env", "Pods/.env", "DerivedData/.env", "apps/web/dist/worker/.dev.vars"];
-        const source = [".env", "apps/web/.dev.vars", "buildings/.env", "apps/web/.alchemy-config/.dev.vars", "apps/web/.alchemy/worker/.dev.vars", "apps/web/.wrangler/state/.dev.vars"];
+        const generated = [
+          "node_modules/pkg/.env",
+          ".next/.env",
+          ".turbo/.env",
+          "dist/.env",
+          ".cache/.env",
+          "build/.env",
+          ".build/.env",
+          "Pods/.env",
+          "DerivedData/.env",
+          "apps/web/dist/worker/.dev.vars",
+        ];
+        const source = [
+          ".env",
+          "apps/web/.dev.vars",
+          "buildings/.env",
+          "apps/web/.alchemy-config/.dev.vars",
+          "apps/web/.alchemy/worker/.dev.vars",
+          "apps/web/.wrangler/state/.dev.vars",
+        ];
         for (const path of [...generated, ...source]) writeIn(repo, wt, path, "UNIQUE=1\n");
         if (mode) markerFiles(wt, repo, [...generated, ...source], mode);
 
         const result = await runSafetyPipeline(wt, repo.dir);
-        expect(result.flags.filter((flag) => flag.kind === "env-drift").map((flag) => flag.detail.split(": ")[0]).toSorted()).toEqual(source.toSorted());
+        expect(
+          result.flags
+            .filter((flag) => flag.kind === "env-drift")
+            .map((flag) => flag.detail.split(": ")[0])
+            .toSorted(),
+        ).toEqual(source.toSorted());
         expect(result.ok).toBe(false);
-        for (const path of generated) expect(readFileSync(join(wt, path), "utf8")).toBe("UNIQUE=1\n");
+        for (const path of generated)
+          expect(readFileSync(join(wt, path), "utf8")).toBe("UNIQUE=1\n");
       } finally {
         repo.rm();
       }
@@ -489,7 +566,12 @@ describe("runSafetyPipeline generated env ownership", () => {
           writeFileSync(join(wt, ".worktreeinclude"), "# current policy no longer selects these\n");
         }
         const result = await runSafetyPipeline(wt, repo.dir);
-        expect(result.flags.filter((flag) => flag.kind === "env-drift").map((flag) => flag.detail.split(": ")[0]).toSorted()).toEqual(selected.toSorted());
+        expect(
+          result.flags
+            .filter((flag) => flag.kind === "env-drift")
+            .map((flag) => flag.detail.split(": ")[0])
+            .toSorted(),
+        ).toEqual(selected.toSorted());
         expect(result.ok).toBe(false);
       } finally {
         repo.rm();
@@ -505,7 +587,9 @@ describe("runSafetyPipeline generated env ownership", () => {
       markerFiles(wt, repo, selected);
       for (const path of selected) writeIn(repo, wt, path, "UNIQUE=1\n");
       const result = await runSafetyPipeline(wt, repo.dir);
-      expect(result.flags.filter((flag) => flag.kind === "env-drift")).toHaveLength(selected.length);
+      expect(result.flags.filter((flag) => flag.kind === "env-drift")).toHaveLength(
+        selected.length,
+      );
     } finally {
       repo.rm();
     }
@@ -520,7 +604,9 @@ describe("runSafetyPipeline generated env ownership", () => {
       markerFiles(wt, repo, [], "none");
       writeIn(repo, wt, ".env", "UNIQUE=1\n");
       const result = await runSafetyPipeline(wt, repo.dir);
-      expect(result.flags.filter((flag) => flag.kind === "env-drift").map((flag) => flag.detail)).toEqual([".env: missing in primary (1 keys)"]);
+      expect(
+        result.flags.filter((flag) => flag.kind === "env-drift").map((flag) => flag.detail),
+      ).toEqual([".env: missing in primary (1 keys)"]);
       expect(result.ok).toBe(false);
     } finally {
       repo.rm();
