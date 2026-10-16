@@ -22,7 +22,10 @@ describe("cmdNew", () => {
       mkdirSync(join(repo.dir, "runs/local"), { recursive: true });
       symlinkSync(
         "_runs/missing/artifacts",
-        join(repo.dir, "runs/local/billing-refund-permanent-ses-rejection-releases-the-reserved-autumn-unit"),
+        join(
+          repo.dir,
+          "runs/local/billing-refund-permanent-ses-rejection-releases-the-reserved-autumn-unit",
+        ),
       );
       symlinkSync("missing-env-target", join(repo.dir, ".env.broken"));
 
@@ -36,11 +39,13 @@ describe("cmdNew", () => {
       expect(existsSync(join(wtDir, "node_modules"))).toBe(false);
       expect(existsSync(join(wtDir, "DerivedDataDevice"))).toBe(false);
       expect(existsSync(join(wtDir, "runs/local/artifact.bin"))).toBe(false);
-      expect(
-        () =>
-          lstatSync(
-            join(wtDir, "runs/local/billing-refund-permanent-ses-rejection-releases-the-reserved-autumn-unit"),
+      expect(() =>
+        lstatSync(
+          join(
+            wtDir,
+            "runs/local/billing-refund-permanent-ses-rejection-releases-the-reserved-autumn-unit",
           ),
+        ),
       ).toThrow();
       expect(repo.gitIn(wtDir, "branch", "--show-current").trim()).toBe("feat/sync-test");
 
@@ -79,7 +84,11 @@ describe("cmdNew", () => {
       repo.git("branch", "-f", "topic", localHead);
       const wtDir = await cmdNew("topic", "missing-base", { ...OPTS, cwd: repo.dir });
       expect(repo.gitIn(wtDir, "rev-parse", "HEAD").trim()).toBe(localHead);
-      expect(readProvenance(wtDir)?.source).toEqual({ kind: "local", ref: "refs/heads/topic", head: localHead });
+      expect(readProvenance(wtDir)?.source).toEqual({
+        kind: "local",
+        ref: "refs/heads/topic",
+        head: localHead,
+      });
     } finally {
       repo.rm();
     }
@@ -96,11 +105,20 @@ describe("cmdNew", () => {
       const remoteHead = repo.commit("remote topic");
       repo.git("update-ref", "refs/remotes/origin/topic", remoteHead);
       repo.git("reset", "--hard", baseHead);
-      const wtDir = await cmdNew("topic", "main", { ...OPTS, cwd: repo.dir, install: true, installRunner: async () => 0 });
+      const wtDir = await cmdNew("topic", "main", {
+        ...OPTS,
+        cwd: repo.dir,
+        install: true,
+        installRunner: async () => 0,
+      });
       expect(repo.gitIn(wtDir, "rev-parse", "HEAD").trim()).toBe(remoteHead);
       expect(await Bun.file(join(wtDir, "setup-head.txt")).text()).toBe(`${remoteHead}\n`);
       expect(repo.git("for-each-ref", "--format=%(upstream)", "refs/heads/topic").trim()).toBe("");
-      expect(readProvenance(wtDir)?.source).toEqual({ kind: "origin", ref: "refs/remotes/origin/topic", head: remoteHead });
+      expect(readProvenance(wtDir)?.source).toEqual({
+        kind: "origin",
+        ref: "refs/remotes/origin/topic",
+        head: remoteHead,
+      });
       expect(readProvenance(wtDir)?.base).toBe("refs/remotes/origin/topic");
     } finally {
       repo.rm();
@@ -118,7 +136,9 @@ describe("cmdNew", () => {
       ] as const) {
         repo.git("update-ref", `refs/remotes/origin/${branch}`, "HEAD");
         await cmdNew(branch, "missing-base", { ...OPTS, cwd: repo.dir, extraFlags: [...flags] });
-        expect(repo.git("for-each-ref", "--format=%(upstream)", `refs/heads/${branch}`).trim()).toBe(upstream);
+        expect(
+          repo.git("for-each-ref", "--format=%(upstream)", `refs/heads/${branch}`).trim(),
+        ).toBe(upstream);
       }
     } finally {
       repo.rm();
@@ -131,18 +151,31 @@ describe("cmdNew", () => {
       repo.addOrigin();
       repo.git("branch", "topic");
       repo.git("push", "origin", "topic");
-      const upstream = (branch: string) => repo.git("for-each-ref", "--format=%(upstream)", `refs/heads/${branch}`).trim();
+      const upstream = (branch: string) =>
+        repo.git("for-each-ref", "--format=%(upstream)", `refs/heads/${branch}`).trim();
 
       await cmdNew("feat/no-upstream", "origin/topic", { ...OPTS, cwd: repo.dir });
       expect(upstream("feat/no-upstream")).toBe("");
 
-      await cmdNew("feat/track", "origin/topic", { ...OPTS, cwd: repo.dir, extraFlags: ["--track"] });
+      await cmdNew("feat/track", "origin/topic", {
+        ...OPTS,
+        cwd: repo.dir,
+        extraFlags: ["--track"],
+      });
       expect(upstream("feat/track")).toBe("refs/remotes/origin/topic");
 
-      await cmdNew("feat/short-track", "origin/topic", { ...OPTS, cwd: repo.dir, extraFlags: ["-t"] });
+      await cmdNew("feat/short-track", "origin/topic", {
+        ...OPTS,
+        cwd: repo.dir,
+        extraFlags: ["-t"],
+      });
       expect(upstream("feat/short-track")).toBe("refs/remotes/origin/topic");
 
-      await cmdNew("feat/explicit-no-track", "origin/topic", { ...OPTS, cwd: repo.dir, extraFlags: ["--no-track"] });
+      await cmdNew("feat/explicit-no-track", "origin/topic", {
+        ...OPTS,
+        cwd: repo.dir,
+        extraFlags: ["--no-track"],
+      });
       expect(upstream("feat/explicit-no-track")).toBe("");
 
       repo.git("branch", "feat/existing-upstream", "main");
@@ -247,11 +280,13 @@ describe("cmdNew", () => {
       expect(failure).toBeInstanceOf(ExitError);
       expect((failure as ExitError).code).toBe(7);
       const wtDir = join(repo.root, "repo-worktrees", "feat-post-install-fail");
-      expect(readProvenance(wtDir)).toEqual(expect.objectContaining({
-        phase: "incomplete",
-        failure: "post-install exited 7",
-        recoveryCommand: `cd '${wtDir}' && exit 7`,
-      }));
+      expect(readProvenance(wtDir)).toEqual(
+        expect.objectContaining({
+          phase: "incomplete",
+          failure: "post-install exited 7",
+          recoveryCommand: `cd '${wtDir}' && exit 7`,
+        }),
+      );
     } finally {
       repo.rm();
     }
@@ -294,17 +329,23 @@ describe("cmdNew", () => {
         },
       });
       let failure: unknown;
-      try { await run; } catch (error) { failure = error; }
+      try {
+        await run;
+      } catch (error) {
+        failure = error;
+      }
       expect(failure).toBeInstanceOf(ExitError);
       expect((failure as ExitError).code).toBe(23);
       const wtDir = join(repo.root, "repo-worktrees", "feat-install-fails");
       expect(installedIn).toBe(wtDir);
       expect(existsSync(wtDir)).toBe(true);
-      expect(readProvenance(wtDir)).toEqual(expect.objectContaining({
-        phase: "incomplete",
-        failure: "dependency install exited 23",
-        recoveryCommand: `cd '${wtDir}' && ni`,
-      }));
+      expect(readProvenance(wtDir)).toEqual(
+        expect.objectContaining({
+          phase: "incomplete",
+          failure: "dependency install exited 23",
+          recoveryCommand: `cd '${wtDir}' && ni`,
+        }),
+      );
     } finally {
       repo.rm();
     }
@@ -321,16 +362,22 @@ describe("cmdNew", () => {
           ...OPTS,
           cwd: repo.dir,
           install: true,
-          installRunner: async () => { throw new Error("spawn EACCES"); },
+          installRunner: async () => {
+            throw new Error("spawn EACCES");
+          },
         });
-      } catch (error) { failure = error; }
+      } catch (error) {
+        failure = error;
+      }
       expect(failure).toBeInstanceOf(ExitError);
       const wtDir = join(repo.root, "repo-worktrees", "feat-install-throws");
-      expect(readProvenance(wtDir)).toEqual(expect.objectContaining({
-        phase: "incomplete",
-        failure: "dependency install failed: spawn EACCES",
-        recoveryCommand: `cd '${wtDir}' && ni`,
-      }));
+      expect(readProvenance(wtDir)).toEqual(
+        expect.objectContaining({
+          phase: "incomplete",
+          failure: "dependency install failed: spawn EACCES",
+          recoveryCommand: `cd '${wtDir}' && ni`,
+        }),
+      );
     } finally {
       repo.rm();
     }
@@ -383,12 +430,33 @@ describe("resolvePrimaryRepo", () => {
       submodule.write("package.json", '{"packageManager":"bun@1.4.0"}\n');
       submodule.write("wt.toml", '[create]\npostInstall = "git rev-parse HEAD > setup-head.txt"\n');
       const setupHead = submodule.commit("setup config");
-      superproject.git("-c", "protocol.file.allow=always", "submodule", "add", submodule.dir, "modules/child");
+      superproject.git(
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        submodule.dir,
+        "modules/child",
+      );
       const checkout = join(superproject.dir, "modules", "child");
       const common = superproject.gitIn(checkout, "rev-parse", "--absolute-git-dir").trim();
       superproject.gitIn(checkout, "config", "extensions.worktreeConfig", "true");
-      superproject.gitIn(checkout, "config", "--file", join(common, "config.worktree"), "core.worktree", checkout);
-      superproject.gitIn(checkout, "config", "--file", join(common, "config"), "--unset", "core.worktree");
+      superproject.gitIn(
+        checkout,
+        "config",
+        "--file",
+        join(common, "config.worktree"),
+        "core.worktree",
+        checkout,
+      );
+      superproject.gitIn(
+        checkout,
+        "config",
+        "--file",
+        join(common, "config"),
+        "--unset",
+        "core.worktree",
+      );
       const lane = join(superproject.root, "existing-lane");
       superproject.gitIn(checkout, "worktree", "add", "-b", "existing-lane", lane);
       superproject.gitIn(lane, "config", "--worktree", "core.worktree", lane);
@@ -397,7 +465,10 @@ describe("resolvePrimaryRepo", () => {
       expect(resolvePrimaryRepo(join(lane, "nested"))).toBe(checkout);
       superproject.gitIn(checkout, "update-ref", "refs/remotes/origin/feat/embedded", setupHead);
       const created = await cmdNew("feat/embedded", "missing-base", {
-        ...OPTS, cwd: join(lane, "nested"), install: true, installRunner: async () => 0,
+        ...OPTS,
+        cwd: join(lane, "nested"),
+        install: true,
+        installRunner: async () => 0,
       });
       expect(created).toBe(join(superproject.dir, "modules", "child-worktrees", "feat-embedded"));
       expect(superproject.gitIn(created, "branch", "--show-current").trim()).toBe("feat/embedded");
@@ -412,14 +483,35 @@ describe("resolvePrimaryRepo", () => {
     const superproject = makeRepo();
     const submodule = makeRepo();
     try {
-      superproject.git("-c", "protocol.file.allow=always", "submodule", "add", submodule.dir, "modules/child");
+      superproject.git(
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        submodule.dir,
+        "modules/child",
+      );
       const checkout = join(superproject.dir, "modules", "child");
       const common = superproject.gitIn(checkout, "rev-parse", "--absolute-git-dir").trim();
       const lane = join(superproject.root, "existing-lane");
       superproject.gitIn(checkout, "worktree", "add", "-b", "existing-lane", lane);
-      superproject.gitIn(checkout, "config", "--file", join(common, "config"), "core.worktree", join(superproject.root, "missing"));
+      superproject.gitIn(
+        checkout,
+        "config",
+        "--file",
+        join(common, "config"),
+        "core.worktree",
+        join(superproject.root, "missing"),
+      );
       expect(() => resolvePrimaryRepo(lane)).toThrow();
-      superproject.gitIn(lane, "config", "--file", join(common, "config"), "core.worktree", submodule.dir);
+      superproject.gitIn(
+        lane,
+        "config",
+        "--file",
+        join(common, "config"),
+        "core.worktree",
+        submodule.dir,
+      );
       expect(() => resolvePrimaryRepo(lane)).toThrow("primary");
     } finally {
       superproject.rm();
@@ -431,7 +523,14 @@ describe("resolvePrimaryRepo", () => {
     const superproject = makeRepo();
     const submodule = makeRepo();
     try {
-      superproject.git("-c", "protocol.file.allow=always", "submodule", "add", submodule.dir, "modules/child");
+      superproject.git(
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        submodule.dir,
+        "modules/child",
+      );
       const checkout = join(superproject.dir, "modules", "child");
       mkdirSync(join(checkout, "nested"));
       expect(resolvePrimaryRepo(checkout)).toBe(checkout);

@@ -32,7 +32,9 @@ function selectedTargets(): ReleaseTarget[] {
   return labels.map((label) => {
     const target = TARGETS[label];
     if (!target) {
-      throw new Error(`Unknown release target '${label}'. Expected one of: ${Object.keys(TARGETS).join(", ")}`);
+      throw new Error(
+        `Unknown release target '${label}'. Expected one of: ${Object.keys(TARGETS).join(", ")}`,
+      );
     }
     return target;
   });
@@ -57,7 +59,10 @@ async function buildTarget(target: ReleaseTarget) {
     REPO_ROOT,
   );
   await chmod(executablePath, 0o755);
-  await copyFile(join(REPO_ROOT, "completions", "wt.zsh"), join(stagingDir, "completions", "wt.zsh"));
+  await copyFile(
+    join(REPO_ROOT, "completions", "wt.zsh"),
+    join(stagingDir, "completions", "wt.zsh"),
+  );
 
   await writeFile(
     join(stagingDir, "README.txt"),

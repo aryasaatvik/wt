@@ -131,7 +131,11 @@ export function readProvenance(wtDir: string): ProvenanceMarker | null {
   }
 }
 
-export async function cmdNew(branch: string, base: string | undefined, opts: CreateOptions): Promise<string> {
+export async function cmdNew(
+  branch: string,
+  base: string | undefined,
+  opts: CreateOptions,
+): Promise<string> {
   const repoRoot = resolvePrimaryRepo(opts.cwd);
   const source = resolveCreateSource(repoRoot, branch, base);
   let createConfig: CreateConfig;
@@ -148,13 +152,26 @@ export async function cmdNew(branch: string, base: string | undefined, opts: Cre
   mkdirSync(dirname(wtDir), { recursive: true });
 
   const existing = source.kind === "local";
-  const trackingFlag = opts.extraFlags.some((flag) =>
-    flag === "-t" || flag === "--track" || flag.startsWith("--track=") || flag === "--no-track"
+  const trackingFlag = opts.extraFlags.some(
+    (flag) =>
+      flag === "-t" || flag === "--track" || flag.startsWith("--track=") || flag === "--no-track",
   );
-  const newBranchFlags = opts.extraFlags.map((flag) => flag === "-t" ? "--track" : flag);
+  const newBranchFlags = opts.extraFlags.map((flag) => (flag === "-t" ? "--track" : flag));
   const addArgs = existing
     ? ["git", "-C", repoRoot, "worktree", "add", wtDir, branch, ...opts.extraFlags]
-    : ["git", "-C", repoRoot, "worktree", "add", ...(trackingFlag ? [] : ["--no-track"]), "-b", branch, wtDir, source.ref, ...newBranchFlags];
+    : [
+        "git",
+        "-C",
+        repoRoot,
+        "worktree",
+        "add",
+        ...(trackingFlag ? [] : ["--no-track"]),
+        "-b",
+        branch,
+        wtDir,
+        source.ref,
+        ...newBranchFlags,
+      ];
   info(
     existing
       ? `Checking out existing branch ${bold(branch)}`
@@ -190,7 +207,8 @@ export async function cmdNew(branch: string, base: string | undefined, opts: Cre
   try {
     await ensureSharedScratchpad(repoRoot, wtDir);
     syncPlan = await planSync(repoRoot, wtDir);
-    if (syncPlan.mode === "legacy") info("No .worktreeinclude found; using v2 legacy sync defaults");
+    if (syncPlan.mode === "legacy")
+      info("No .worktreeinclude found; using v2 legacy sync defaults");
     const copyCount = syncPlan.summary.copy;
     if (copyCount > 0) {
       syncSpin.update(`Syncing ${copyCount} files`);

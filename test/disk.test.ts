@@ -13,7 +13,15 @@ describe("owned disk accounting", () => {
       repo.git("-c", "protocol.file.allow=always", "submodule", "add", module.dir, "vendor/module");
       repo.commit("add submodule");
       const lane = repo.addWorktree("lane", { branch: "feat/lane" });
-      repo.gitIn(lane, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive");
+      repo.gitIn(
+        lane,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "update",
+        "--init",
+        "--recursive",
+      );
 
       const nested = join(lane, "vendor/module");
       const nestedGitDir = repo.gitIn(nested, "rev-parse", "--absolute-git-dir").trim();
@@ -34,16 +42,23 @@ describe("owned disk accounting", () => {
       expect(linkedUsage.ownedKb).toBe(linkedUsage.checkoutKb + linkedUsage.privateGitKb);
       expect(linkedUsage.sharedKb).toBeGreaterThan(0);
 
-      const cachePath = join(repo.gitIn(lane, "rev-parse", "--absolute-git-dir").trim(), "wt-size.json");
+      const cachePath = join(
+        repo.gitIn(lane, "rev-parse", "--absolute-git-dir").trim(),
+        "wt-size.json",
+      );
       expect(JSON.parse(readFileSync(cachePath, "utf8")).version).toBe(3);
 
-      const json = JSON.parse(await cmdDu({ cwd: repo.dir, target: "feat/lane", json: true, fresh: false }));
+      const json = JSON.parse(
+        await cmdDu({ cwd: repo.dir, target: "feat/lane", json: true, fresh: false }),
+      );
       expect(json).toHaveLength(1);
-      expect(json[0].usage).toEqual(expect.objectContaining({
-        checkoutKb: linkedUsage.checkoutKb,
-        privateGitKb: linkedUsage.privateGitKb,
-        ownedKb: linkedUsage.ownedKb,
-      }));
+      expect(json[0].usage).toEqual(
+        expect.objectContaining({
+          checkoutKb: linkedUsage.checkoutKb,
+          privateGitKb: linkedUsage.privateGitKb,
+          ownedKb: linkedUsage.ownedKb,
+        }),
+      );
     } finally {
       repo.rm();
       module.rm();
@@ -57,7 +72,10 @@ describe("owned disk accounting", () => {
       const untouched = repo.addWorktree("untouched", { branch: "feat/untouched" });
       // Prime every lane's cache so a scoped fresh run has other caches to avoid rewriting.
       await measureDiskUsage(repo.dir, "fresh");
-      const untouchedCache = join(repo.gitIn(untouched, "rev-parse", "--absolute-git-dir").trim(), "wt-size.json");
+      const untouchedCache = join(
+        repo.gitIn(untouched, "rev-parse", "--absolute-git-dir").trim(),
+        "wt-size.json",
+      );
       const before = readFileSync(untouchedCache, "utf8");
 
       const reports = await measureDiskUsage(repo.dir, "fresh", { only: [measured] });
@@ -66,7 +84,9 @@ describe("owned disk accounting", () => {
       expect(reports[0]!.branch).toBe("feat/measured");
       expect(readFileSync(untouchedCache, "utf8")).toBe(before);
 
-      const json = JSON.parse(await cmdDu({ cwd: repo.dir, target: "feat/measured", json: true, fresh: true }));
+      const json = JSON.parse(
+        await cmdDu({ cwd: repo.dir, target: "feat/measured", json: true, fresh: true }),
+      );
       expect(json).toHaveLength(1);
       expect(json[0].branch).toBe("feat/measured");
     } finally {
@@ -79,7 +99,9 @@ describe("owned disk accounting", () => {
     try {
       const lane = repo.addWorktree("missing", { branch: "feat/missing" });
       rmSync(lane, { recursive: true, force: true });
-      const report = (await measureDiskUsage(repo.dir, "fresh")).find((item) => item.branch === "feat/missing");
+      const report = (await measureDiskUsage(repo.dir, "fresh")).find(
+        (item) => item.branch === "feat/missing",
+      );
       expect(report?.usage).toBeNull();
     } finally {
       repo.rm();
@@ -94,7 +116,10 @@ describe("owned disk accounting", () => {
 
       const primaryGitDir = repo.git("rev-parse", "--absolute-git-dir").trim();
       const primaryCache = join(primaryGitDir, "wt-size.json");
-      const laneCache = join(repo.gitIn(lane, "rev-parse", "--absolute-git-dir").trim(), "wt-size.json");
+      const laneCache = join(
+        repo.gitIn(lane, "rev-parse", "--absolute-git-dir").trim(),
+        "wt-size.json",
+      );
       const stale = JSON.parse(readFileSync(primaryCache, "utf8"));
       stale.measuredAt = new Date().toISOString();
       stale.usage.sharedKb = 1;
@@ -109,7 +134,9 @@ describe("owned disk accounting", () => {
       expect(linked.cached).toBe(false);
       expect(linked.usage!.sharedKb).toBeGreaterThan(1);
       expect(primary.usage!.sharedKb).toBe(linked.usage!.sharedKb);
-      expect(JSON.parse(readFileSync(primaryCache, "utf8")).usage.sharedKb).toBe(linked.usage!.sharedKb);
+      expect(JSON.parse(readFileSync(primaryCache, "utf8")).usage.sharedKb).toBe(
+        linked.usage!.sharedKb,
+      );
     } finally {
       repo.rm();
     }

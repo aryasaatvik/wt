@@ -1,4 +1,11 @@
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { listWorktrees, resolvePrimaryRepo } from "./git.ts";
 import { runAsync } from "./term.ts";
@@ -30,7 +37,11 @@ const CACHE_FILE = "wt-size.json";
 const CACHE_TTL_MS = 24 * 3600_000;
 
 function canonical(path: string): string {
-  try { return realpathSync.native(path); } catch { return resolve(path); }
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return resolve(path);
+  }
 }
 
 function contains(parent: string, child: string): boolean {
@@ -62,7 +73,9 @@ async function sumKb(paths: string[]): Promise<number> {
 
 async function checkoutKb(worktree: string, metadata: RepoMetadata[]): Promise<number> {
   if (!existsSync(worktree)) return 0;
-  const entries = readdirSync(worktree).filter((name) => name !== ".git").map((name) => join(worktree, name));
+  const entries = readdirSync(worktree)
+    .filter((name) => name !== ".git")
+    .map((name) => join(worktree, name));
   // Count symlink entries themselves, not the external storage they reference.
   const owned: string[] = [];
   let linksKb = 0;
@@ -72,12 +85,14 @@ async function checkoutKb(worktree: string, metadata: RepoMetadata[]): Promise<n
     if (stat.isSymbolicLink()) linksKb += stat.blocks / 2;
     else owned.push(path);
   }
-  const total = await sumKb(owned) + linksKb;
+  const total = (await sumKb(owned)) + linksKb;
   const topGit = join(worktree, ".git");
   const nestedMetadata = minimalRoots(
-    metadata.flatMap((item) => [item.gitDir, item.commonDir]).filter((path) => contains(worktree, path) && !contains(topGit, path)),
+    metadata
+      .flatMap((item) => [item.gitDir, item.commonDir])
+      .filter((path) => contains(worktree, path) && !contains(topGit, path)),
   );
-  return Math.max(0, total - await sumKb(nestedMetadata));
+  return Math.max(0, total - (await sumKb(nestedMetadata)));
 }
 
 async function metadataFor(repoPath: string): Promise<RepoMetadata | null> {
@@ -95,10 +110,21 @@ async function metadataFor(repoPath: string): Promise<RepoMetadata | null> {
 
 async function nestedRepos(worktree: string): Promise<string[]> {
   const result = await runAsync([
-    "git", "-C", worktree, "submodule", "foreach", "--recursive", "--quiet", "pwd -P",
+    "git",
+    "-C",
+    worktree,
+    "submodule",
+    "foreach",
+    "--recursive",
+    "--quiet",
+    "pwd -P",
   ]);
   if (!result.ok) return [];
-  return result.stdout.split("\n").map((line) => line.trim()).filter(Boolean).map(canonical);
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map(canonical);
 }
 
 async function metadataTree(worktree: string): Promise<RepoMetadata[]> {
@@ -120,17 +146,27 @@ function readCache(path: string | null): WorktreeDiskUsage | null {
       usage?: WorktreeDiskUsage;
     };
     const age = Date.now() - Date.parse(String(value.measuredAt));
-    if (value.version !== CACHE_VERSION || age < 0 || age >= CACHE_TTL_MS || !value.usage) return null;
+    if (value.version !== CACHE_VERSION || age < 0 || age >= CACHE_TTL_MS || !value.usage)
+      return null;
     const fields = [value.usage.checkoutKb, value.usage.privateGitKb, value.usage.ownedKb];
-    return fields.every((field) => typeof field === "number" && Number.isFinite(field)) ? value.usage : null;
-  } catch { return null; }
+    return fields.every((field) => typeof field === "number" && Number.isFinite(field))
+      ? value.usage
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function writeCache(path: string | null, usage: WorktreeDiskUsage): void {
   if (!path) return;
   try {
-    writeFileSync(path, `${JSON.stringify({ version: CACHE_VERSION, measuredAt: new Date().toISOString(), usage })}\n`);
-  } catch { /* cache is best-effort */ }
+    writeFileSync(
+      path,
+      `${JSON.stringify({ version: CACHE_VERSION, measuredAt: new Date().toISOString(), usage })}\n`,
+    );
+  } catch {
+    /* cache is best-effort */
+  }
 }
 
 interface MeasureOptions {
@@ -151,9 +187,14 @@ export async function measureDiskUsage(
   const primary = resolvePrimaryRepo(cwd);
   const worktrees = listWorktrees(primary);
   const metadata = await Promise.all(worktrees.map((worktree) => metadataTree(worktree.path)));
-  const cached = mode === "cached" ? metadata.map((tree) => readCache(cachePath(tree))) : metadata.map(() => null);
+  const cached =
+    mode === "cached"
+      ? metadata.map((tree) => readCache(cachePath(tree)))
+      : metadata.map(() => null);
 
-  const privateByWorktree = metadata.map((tree) => minimalRoots(tree.filter((item) => item.gitDir !== item.commonDir).map((item) => item.gitDir)));
+  const privateByWorktree = metadata.map((tree) =>
+    minimalRoots(tree.filter((item) => item.gitDir !== item.commonDir).map((item) => item.gitDir)),
+  );
   const allPrivate = minimalRoots(privateByWorktree.flat());
   const sharedRoots = minimalRoots(metadata.flatMap((tree) => tree.map((item) => item.commonDir)));
 
@@ -163,40 +204,64 @@ export async function measureDiskUsage(
     .map((worktree, index) => ({ worktree, index }))
     .filter(({ worktree }) => !onlyPaths || onlyPaths.has(canonical(worktree.path)));
 
-  const measureShared = async () => Math.max(
-    0,
-    await sumKb(sharedRoots) - await sumKb(allPrivate.filter((path) => sharedRoots.some((root) => contains(root, path)))),
-  );
+  const measureShared = async () =>
+    Math.max(
+      0,
+      (await sumKb(sharedRoots)) -
+        (await sumKb(
+          allPrivate.filter((path) => sharedRoots.some((root) => contains(root, path))),
+        )),
+    );
   // Shared storage is repository-wide. Reuse it only when every lane's cache
   // is valid; if any lane needs measurement, refresh the common total for all
   // reports so a stale cache cannot contaminate newly measured lanes. A scoped
   // run never reads every lane's cache, so it measures shared storage directly.
-  const cachedShared = !scoped && cached.every((usage) => usage !== null)
-    ? cached.find((usage) => typeof usage?.sharedKb === "number")?.sharedKb
-    : undefined;
+  const cachedShared =
+    !scoped && cached.every((usage) => usage !== null)
+      ? cached.find((usage) => typeof usage?.sharedKb === "number")?.sharedKb
+      : undefined;
   const sharedKb = cachedShared ?? (await measureShared());
 
-  const reports = await Promise.all(selected.map(async ({ worktree, index }): Promise<WorktreeDiskReport> => {
-    if (!existsSync(worktree.path)) {
-      return { path: worktree.path, branch: worktree.branch, primary: false, cached: false, usage: null };
-    }
-    if (cached[index]) {
-      const usage = { ...cached[index]!, sharedKb };
-      if (cached[index]!.sharedKb !== sharedKb) writeCache(cachePath(metadata[index]!), usage);
+  const reports = await Promise.all(
+    selected.map(async ({ worktree, index }): Promise<WorktreeDiskReport> => {
+      if (!existsSync(worktree.path)) {
+        return {
+          path: worktree.path,
+          branch: worktree.branch,
+          primary: false,
+          cached: false,
+          usage: null,
+        };
+      }
+      if (cached[index]) {
+        const usage = { ...cached[index]!, sharedKb };
+        if (cached[index]!.sharedKb !== sharedKb) writeCache(cachePath(metadata[index]!), usage);
+        return {
+          path: worktree.path,
+          branch: worktree.branch,
+          primary: worktree.path === primary,
+          cached: true,
+          usage,
+        };
+      }
+      const tree = metadata[index]!;
+      const checkoutSizeKb = await checkoutKb(worktree.path, tree);
+      const privateGitKb = await sumKb(privateByWorktree[index]!);
+      const usage = {
+        checkoutKb: checkoutSizeKb,
+        privateGitKb,
+        ownedKb: checkoutSizeKb + privateGitKb,
+        sharedKb,
+      };
+      writeCache(cachePath(tree), usage);
       return {
         path: worktree.path,
         branch: worktree.branch,
         primary: worktree.path === primary,
-        cached: true,
+        cached: false,
         usage,
       };
-    }
-    const tree = metadata[index]!;
-    const checkoutSizeKb = await checkoutKb(worktree.path, tree);
-    const privateGitKb = await sumKb(privateByWorktree[index]!);
-    const usage = { checkoutKb: checkoutSizeKb, privateGitKb, ownedKb: checkoutSizeKb + privateGitKb, sharedKb };
-    writeCache(cachePath(tree), usage);
-    return { path: worktree.path, branch: worktree.branch, primary: worktree.path === primary, cached: false, usage };
-  }));
+    }),
+  );
   return reports;
 }

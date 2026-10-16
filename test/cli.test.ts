@@ -25,7 +25,11 @@ describe("wt cli", () => {
       expect(result.exitCode).toBe(0);
       const lane = join(repo.root, "repo-worktrees", "topic");
       expect(repo.gitIn(lane, "rev-parse", "HEAD").trim()).toBe(head);
-      expect(readProvenance(lane)?.source).toEqual({ kind: "origin", ref: "refs/remotes/origin/topic", head });
+      expect(readProvenance(lane)?.source).toEqual({
+        kind: "origin",
+        ref: "refs/remotes/origin/topic",
+        head,
+      });
       expect(result.stdout.toString()).toContain(head);
     } finally {
       repo.rm();
@@ -83,8 +87,23 @@ describe("wt cli", () => {
       const start = output.indexOf("{\n");
       const end = output.lastIndexOf("\n}");
       const example = JSON.parse(output.slice(start, end + 2));
-      expect(Object.keys(example)).toEqual(["version", "primary", "worktree", "head", "state", "sourceHash", "entries", "resolutions"]);
-      expect(example.entries[0]).toEqual({ path: "note.md", kind: "file", hash: "<entry hash from preview>", mode: 420, status: "review" });
+      expect(Object.keys(example)).toEqual([
+        "version",
+        "primary",
+        "worktree",
+        "head",
+        "state",
+        "sourceHash",
+        "entries",
+        "resolutions",
+      ]);
+      expect(example.entries[0]).toEqual({
+        path: "note.md",
+        kind: "file",
+        hash: "<entry hash from preview>",
+        mode: 420,
+        status: "review",
+      });
       expect(example.resolutions[0]).toEqual({
         path: "note.md",
         sourceHash: "<entry hash from preview>",

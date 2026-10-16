@@ -22,7 +22,9 @@ if (requestedTag === "--help" || requestedTag === "-h") {
 }
 
 if (requestedTag && requestedTag !== expectedTag) {
-  console.error(`Release tag must match package.json version: expected ${expectedTag}, got ${requestedTag}`);
+  console.error(
+    `Release tag must match package.json version: expected ${expectedTag}, got ${requestedTag}`,
+  );
   process.exit(1);
 }
 
@@ -38,7 +40,11 @@ function run(command: string, args: ReadonlyArray<string>) {
 }
 
 function capture(command: string, args: ReadonlyArray<string>) {
-  const result = spawnSync(command, args, { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+  const result = spawnSync(command, args, {
+    cwd: repoRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
   return result.stdout.trim();
@@ -100,4 +106,10 @@ if (!succeeds("gh", ["release", "view", tag])) {
   run("gh", ["release", "create", tag, "--title", tag, "--generate-notes"]);
 }
 
-run("gh", ["release", "upload", tag, ...artifactNames.map((n) => join(releaseRoot, n)), "--clobber"]);
+run("gh", [
+  "release",
+  "upload",
+  tag,
+  ...artifactNames.map((n) => join(releaseRoot, n)),
+  "--clobber",
+]);

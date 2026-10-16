@@ -2,7 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { originDefault } from "../src/git.ts";
-import { pickPr, prForCommit, prStateFor, remoteRepos, scanWorktrees, type PrInfo } from "../src/scan.ts";
+import {
+  pickPr,
+  prForCommit,
+  prStateFor,
+  remoteRepos,
+  scanWorktrees,
+  type PrInfo,
+} from "../src/scan.ts";
 import { makeRepo } from "./harness.ts";
 
 describe("prStateFor", () => {
@@ -14,15 +21,39 @@ describe("prStateFor", () => {
   const listing = { prs, complete: true };
 
   test("maps gh states and misses", () => {
-    expect(prStateFor("feat/a", listing)).toEqual({ prState: "open", prNumber: 12, mergeCommit: null });
-    expect(prStateFor("feat/b", listing)).toEqual({ prState: "merged", prNumber: 8, mergeCommit: "abc123" });
-    expect(prStateFor("feat/c", listing)).toEqual({ prState: "closed", prNumber: 5, mergeCommit: null });
-    expect(prStateFor("feat/none", listing)).toEqual({ prState: "none", prNumber: null, mergeCommit: null });
-    expect(prStateFor(null, listing)).toEqual({ prState: "none", prNumber: null, mergeCommit: null });
+    expect(prStateFor("feat/a", listing)).toEqual({
+      prState: "open",
+      prNumber: 12,
+      mergeCommit: null,
+    });
+    expect(prStateFor("feat/b", listing)).toEqual({
+      prState: "merged",
+      prNumber: 8,
+      mergeCommit: "abc123",
+    });
+    expect(prStateFor("feat/c", listing)).toEqual({
+      prState: "closed",
+      prNumber: 5,
+      mergeCommit: null,
+    });
+    expect(prStateFor("feat/none", listing)).toEqual({
+      prState: "none",
+      prNumber: null,
+      mergeCommit: null,
+    });
+    expect(prStateFor(null, listing)).toEqual({
+      prState: "none",
+      prNumber: null,
+      mergeCommit: null,
+    });
   });
 
   test("degrades to unknown when gh data is unavailable", () => {
-    expect(prStateFor("feat/a", null)).toEqual({ prState: "unknown", prNumber: null, mergeCommit: null });
+    expect(prStateFor("feat/a", null)).toEqual({
+      prState: "unknown",
+      prNumber: null,
+      mergeCommit: null,
+    });
   });
 
   test("a miss in a truncated listing is unknown, not none", () => {
@@ -31,18 +62,32 @@ describe("prStateFor", () => {
       prNumber: null,
       mergeCommit: null,
     });
-    expect(prStateFor("feat/a", { prs, complete: false })).toEqual({ prState: "open", prNumber: 12, mergeCommit: null });
+    expect(prStateFor("feat/a", { prs, complete: false })).toEqual({
+      prState: "open",
+      prNumber: 12,
+      mergeCommit: null,
+    });
   });
 });
 
 describe("pickPr", () => {
   test("open outranks merged outranks closed", () => {
-    expect(pickPr([{ prState: "merged", prNumber: 1, mergeCommit: "abc" }, { prState: "open", prNumber: 2, mergeCommit: null }])).toEqual({
+    expect(
+      pickPr([
+        { prState: "merged", prNumber: 1, mergeCommit: "abc" },
+        { prState: "open", prNumber: 2, mergeCommit: null },
+      ]),
+    ).toEqual({
       prState: "open",
       prNumber: 2,
       mergeCommit: null,
     });
-    expect(pickPr([{ prState: "closed", prNumber: 3, mergeCommit: null }, { prState: "merged", prNumber: 4, mergeCommit: "def" }])).toEqual({
+    expect(
+      pickPr([
+        { prState: "closed", prNumber: 3, mergeCommit: null },
+        { prState: "merged", prNumber: 4, mergeCommit: "def" },
+      ]),
+    ).toEqual({
       prState: "merged",
       prNumber: 4,
       mergeCommit: "def",
@@ -102,11 +147,12 @@ esac
 });
 
 describe("scanWorktrees", () => {
-  const cache = (ownedKb: number, measuredAt = new Date().toISOString()) => JSON.stringify({
-    version: 3,
-    measuredAt,
-    usage: { checkoutKb: ownedKb, privateGitKb: 0, ownedKb, sharedKb: 1 },
-  });
+  const cache = (ownedKb: number, measuredAt = new Date().toISOString()) =>
+    JSON.stringify({
+      version: 3,
+      measuredAt,
+      usage: { checkoutKb: ownedKb, privateGitKb: 0, ownedKb, sharedKb: 1 },
+    });
   test("keeps merge commits from both branch listing and commit lookup", async () => {
     const repo = makeRepo();
     try {
@@ -119,20 +165,32 @@ describe("scanWorktrees", () => {
       const bin = join(repo.root, "bin");
       mkdirSync(bin);
       const gh = join(bin, "gh");
-      writeFileSync(gh, `#!/bin/sh
+      writeFileSync(
+        gh,
+        `#!/bin/sh
 if [ "$1" = "pr" ]; then
   case "$*" in *mergeCommit*) printf '[{"headRefName":"feat/merged","state":"MERGED","number":42,"mergeCommit":{"oid":"%s"}}]\\n' "$WT_TEST_BRANCH_OID" ;; *) exit 1 ;; esac
 else
   case "$*" in *merge_commit_sha*) [ "$WT_TEST_REST_OID" = "none" ] || printf '42\\tmerged\\t%s\\n' "$WT_TEST_REST_OID" ;; *) exit 1 ;; esac
 fi
-`);
+`,
+      );
       chmodSync(gh, 0o755);
-      const env = { PATH: `${bin}:/usr/bin:/bin`, WT_TEST_BRANCH_OID: branchOid, WT_TEST_REST_OID: restOid };
+      const env = {
+        PATH: `${bin}:/usr/bin:/bin`,
+        WT_TEST_BRANCH_OID: branchOid,
+        WT_TEST_REST_OID: restOid,
+      };
 
-      const listed = await scanWorktrees(repo.dir, { env, sizeMode: "skip", resolvePrsByCommit: false });
+      const listed = await scanWorktrees(repo.dir, {
+        env,
+        sizeMode: "skip",
+        resolvePrsByCommit: false,
+      });
       expect(listed.find((r) => r.slug === "feat-merged")?.mergeCommit).toBe(branchOid);
       const branchOnly = await scanWorktrees(repo.dir, {
-        env: { ...env, WT_TEST_REST_OID: "none" }, sizeMode: "skip",
+        env: { ...env, WT_TEST_REST_OID: "none" },
+        sizeMode: "skip",
       });
       // an older merged PR on the branch never vouches for a HEAD no PR contains
       const unmatched = branchOnly.find((r) => r.slug === "feat-merged");
@@ -159,7 +217,9 @@ fi
       repo.gitIn(upper, "checkout", "-b", "feat/upper", "--track", "origin/feat/parent");
       repo.gitIn(upper, "commit", "--allow-empty", "-m", "upper work");
       repo.gitIn(upper, "push", "origin", "HEAD:feat/upper");
-      expect(repo.gitIn(upper, "rev-parse", "--abbrev-ref", "@{u}").trim()).toBe("origin/feat/parent");
+      expect(repo.gitIn(upper, "rev-parse", "--abbrev-ref", "@{u}").trim()).toBe(
+        "origin/feat/parent",
+      );
 
       const records = await scanWorktrees(repo.dir, { sizeMode: "skip" });
       const lane = records.find((r) => r.slug === "feat-upper");
@@ -273,7 +333,10 @@ fi
     const repo = makeRepo();
     try {
       const lane = repo.addWorktree("lane", { branch: "lane" });
-      const laneCache = join(repo.gitIn(lane, "rev-parse", "--absolute-git-dir").trim(), "wt-size.json");
+      const laneCache = join(
+        repo.gitIn(lane, "rev-parse", "--absolute-git-dir").trim(),
+        "wt-size.json",
+      );
 
       // entry older than the 24h TTL — remeasure and refresh the file
       const stale = new Date(Date.now() - 25 * 3600_000).toISOString();
@@ -298,7 +361,9 @@ fi
 
       // skip mode: no size, and the (now valid) cache file is left untouched
       writeFileSync(laneCache, cache(424242));
-      const skipped = (await scanWorktrees(repo.dir, { sizeMode: "skip" })).find((r) => r.slug === "lane")!;
+      const skipped = (await scanWorktrees(repo.dir, { sizeMode: "skip" })).find(
+        (r) => r.slug === "lane",
+      )!;
       expect(skipped.sizeKb).toBeNull();
       expect(skipped.sizeCached).toBe(false);
       expect(JSON.parse(readFileSync(laneCache, "utf8")).usage.ownedKb).toBe(424242);

@@ -80,16 +80,28 @@ export async function fetchPrs(
   if (!Bun.which("gh", { PATH: env.PATH ?? "" })) return null;
   try {
     const p = Bun.spawn(
-      ["gh", "pr", "list", "--state", "all", "--limit", String(PR_LIST_LIMIT), "--json", "headRefName,state,number,mergeCommit"],
+      [
+        "gh",
+        "pr",
+        "list",
+        "--state",
+        "all",
+        "--limit",
+        String(PR_LIST_LIMIT),
+        "--json",
+        "headRefName,state,number,mergeCommit",
+      ],
       { cwd: repoRoot, env: env as Record<string, string>, stdout: "pipe", stderr: "ignore" },
     );
     const timer = setTimeout(() => p.kill(), timeoutMs);
     const [stdout, code] = await Promise.all([Bun.readableStreamToText(p.stdout), p.exited]);
     clearTimeout(timer);
     if (code !== 0) return null;
-    const prs = (JSON.parse(stdout) as Array<Omit<PrInfo, "mergeCommit"> & { mergeCommit?: { oid?: string } | null }>).map(
-      (pr) => ({ ...pr, mergeCommit: pr.mergeCommit?.oid ?? null }),
-    );
+    const prs = (
+      JSON.parse(stdout) as Array<
+        Omit<PrInfo, "mergeCommit"> & { mergeCommit?: { oid?: string } | null }
+      >
+    ).map((pr) => ({ ...pr, mergeCommit: pr.mergeCommit?.oid ?? null }));
     return { prs, complete: prs.length < PR_LIST_LIMIT };
   } catch {
     return null;
@@ -111,7 +123,11 @@ export function prStateFor(
   const state = pr.state.toLowerCase();
   const prState: PrState =
     state === "open" || state === "merged" || state === "closed" ? state : "unknown";
-  return { prState, prNumber: pr.number, mergeCommit: prState === "merged" ? pr.mergeCommit : null };
+  return {
+    prState,
+    prNumber: pr.number,
+    mergeCommit: prState === "merged" ? pr.mergeCommit : null,
+  };
 }
 
 const GITHUB_REMOTE = /github\.com[:/](.+?)(?:\.git)?$/;
@@ -124,7 +140,10 @@ const GITHUB_REMOTE = /github\.com[:/](.+?)(?:\.git)?$/;
 export async function remoteRepos(cwd: string): Promise<RemoteRepo[]> {
   const list = await runAsync(["git", "-C", cwd, "remote"]);
   if (!list.ok) return [];
-  const names = list.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+  const names = list.stdout
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
   names.sort((a, b) => Number(b === "origin") - Number(a === "origin"));
   const repos: RemoteRepo[] = [];
   for (const name of names) {
@@ -192,7 +211,11 @@ export async function prForCommit(
         const [num, state, mergeCommit] = line.split("\t");
         const prState = String(state).toLowerCase();
         if (prState !== "open" && prState !== "merged" && prState !== "closed") continue;
-        candidates.push({ prState, prNumber: Number(num), mergeCommit: prState === "merged" ? mergeCommit || null : null });
+        candidates.push({
+          prState,
+          prNumber: Number(num),
+          mergeCommit: prState === "merged" ? mergeCommit || null : null,
+        });
       }
     } catch {
       complete = false;
@@ -221,7 +244,9 @@ async function probe(
   const upstream = upstreamRes.ok ? upstreamRes.stdout.trim() : null;
   const ownOrigin = wt.branch ? `refs/remotes/origin/${wt.branch}` : null;
   const ownOriginRes = ownOrigin ? await g("show-ref", "--verify", "--quiet", ownOrigin) : null;
-  const compareRef = ownOriginRes?.ok ? `origin/${wt.branch}` : upstream ?? (defaultBranch ? `origin/${defaultBranch}` : null);
+  const compareRef = ownOriginRes?.ok
+    ? `origin/${wt.branch}`
+    : (upstream ?? (defaultBranch ? `origin/${defaultBranch}` : null));
 
   let ahead: number | null = null;
   let behind: number | null = null;
@@ -264,7 +289,10 @@ async function probe(
   };
 }
 
-export async function scanWorktrees(cwd: string, opts: ScanOptions = {}): Promise<WorktreeStatus[]> {
+export async function scanWorktrees(
+  cwd: string,
+  opts: ScanOptions = {},
+): Promise<WorktreeStatus[]> {
   const repoRoot = resolvePrimaryRepo(cwd);
   const worktrees = listWorktrees(repoRoot);
   const defaultBranch = originDefault(repoRoot);

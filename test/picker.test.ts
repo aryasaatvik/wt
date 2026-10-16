@@ -12,10 +12,20 @@ describe("picker removeLane", () => {
       repo.git("-c", "protocol.file.allow=always", "submodule", "add", module.dir, "vendor/module");
       repo.commit("add submodule");
       const wt = repo.addWorktree("with-module", { branch: "feat/module" });
-      repo.gitIn(wt, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive");
+      repo.gitIn(
+        wt,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "update",
+        "--init",
+        "--recursive",
+      );
       const result = await removeLane("with-module", wt, repo.dir);
       expect(result.removed).toBe(true);
-      expect(result.status).toMatch(/^removed with-module · submodule Git data retained at .*wt-submodules-.*modules$/);
+      expect(result.status).toMatch(
+        /^removed with-module · submodule Git data retained at .*wt-submodules-.*modules$/,
+      );
       expect(existsSync(wt)).toBe(false);
       expect(repo.git("config", "--get", "submodule.vendor/module.url").trim()).toBe(module.dir);
     } finally {
@@ -31,12 +41,21 @@ describe("picker removeLane", () => {
       repo.git("-c", "protocol.file.allow=always", "submodule", "add", module.dir, "vendor/module");
       repo.commit("add submodule");
       const wt = repo.addWorktree("with-module", { branch: "feat/module" });
-      repo.gitIn(wt, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive");
+      repo.gitIn(
+        wt,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "update",
+        "--init",
+        "--recursive",
+      );
       await Bun.write(join(wt, "vendor/module/untracked.txt"), "keep\n");
       const result = await removeLane("with-module", wt, repo.dir);
       expect(result).toEqual({
         removed: false,
-        status: "skipped with-module: submodule vendor/module has changes, untracked, or ignored files",
+        status:
+          "skipped with-module: submodule vendor/module has changes, untracked, or ignored files",
       });
       expect(existsSync(join(wt, "vendor/module/untracked.txt"))).toBe(true);
     } finally {

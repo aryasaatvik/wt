@@ -1,9 +1,33 @@
 import { describe, expect, test } from "bun:test";
-import { closeSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readlinkSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { slugFor } from "../src/create.ts";
-import { applySyncPlan, classifyCopy, copyFileNoFollowAt, isAllowed, isExcluded, isEnvFile, planSync, readSyncConfig, syncFiles } from "../src/sync.ts";
+import {
+  applySyncPlan,
+  classifyCopy,
+  copyFileNoFollowAt,
+  isAllowed,
+  isExcluded,
+  isEnvFile,
+  planSync,
+  readSyncConfig,
+  syncFiles,
+} from "../src/sync.ts";
 import { makeRepo } from "./harness.ts";
 
 describe("slugFor", () => {
@@ -28,7 +52,11 @@ describe("isAllowed", () => {
   });
 
   test("drops artifact trees and unrelated gitignored files", () => {
-    expect(isAllowed("apps/e2e/runs/local/billing-refund-permanent-ses-rejection-releases-the-reserved-autumn-unit")).toBe(false);
+    expect(
+      isAllowed(
+        "apps/e2e/runs/local/billing-refund-permanent-ses-rejection-releases-the-reserved-autumn-unit",
+      ),
+    ).toBe(false);
     expect(isAllowed(".alchemy/local/aws/lambda/Api/index.js")).toBe(false);
     expect(isAllowed("builder-config.json")).toBe(false);
     expect(isAllowed(".DS_Store")).toBe(false);
@@ -65,19 +93,45 @@ describe("sync planner", () => {
   test("legacy sync skips known generated env while preserving source env", async () => {
     const repo = makeRepo();
     try {
-      repo.write(".gitignore", ".env\n.env.*\n.dev.vars\nnode_modules/\n.next/\n.turbo/\ndist/\n.cache/\nbuild/\n.build/\nPods/\nDerivedData/\n.alchemy/\n.wrangler/\n");
+      repo.write(
+        ".gitignore",
+        ".env\n.env.*\n.dev.vars\nnode_modules/\n.next/\n.turbo/\ndist/\n.cache/\nbuild/\n.build/\nPods/\nDerivedData/\n.alchemy/\n.wrangler/\n",
+      );
       repo.commit("ignores");
       const target = repo.addWorktree("lane", { branch: "lane" });
-      const generated = ["node_modules/pkg/.env", ".next/.env", ".turbo/.env", "dist/.env", ".cache/.env", "build/.env", ".build/.env", "Pods/.env", "DerivedData/.env", "apps/web/dist/worker/.dev.vars"];
-      const source = [".env", "apps/web/.dev.vars", "buildings/.env", "apps/web/.alchemy-config/.dev.vars", "apps/web/.alchemy/worker/.dev.vars", "apps/web/.wrangler/state/.dev.vars"];
+      const generated = [
+        "node_modules/pkg/.env",
+        ".next/.env",
+        ".turbo/.env",
+        "dist/.env",
+        ".cache/.env",
+        "build/.env",
+        ".build/.env",
+        "Pods/.env",
+        "DerivedData/.env",
+        "apps/web/dist/worker/.dev.vars",
+      ];
+      const source = [
+        ".env",
+        "apps/web/.dev.vars",
+        "buildings/.env",
+        "apps/web/.alchemy-config/.dev.vars",
+        "apps/web/.alchemy/worker/.dev.vars",
+        "apps/web/.wrangler/state/.dev.vars",
+      ];
       for (const path of [...generated, ...source]) repo.write(path, "SOURCE=1\n");
 
-      const plan = await planSync(repo.dir, target, { config: { requireInclude: false, exclude: [] } });
+      const plan = await planSync(repo.dir, target, {
+        config: { requireInclude: false, exclude: [] },
+      });
       expect(plan.mode).toBe("legacy");
-      expect(plan.actions.filter((action) => action.status === "copy").map((action) => action.path)).toEqual(source.toSorted());
+      expect(
+        plan.actions.filter((action) => action.status === "copy").map((action) => action.path),
+      ).toEqual(source.toSorted());
       await applySyncPlan(plan);
       for (const path of generated) expect(existsSync(join(target, path))).toBe(false);
-      for (const path of source) expect(readFileSync(join(target, path), "utf8")).toBe("SOURCE=1\n");
+      for (const path of source)
+        expect(readFileSync(join(target, path), "utf8")).toBe("SOURCE=1\n");
     } finally {
       repo.rm();
     }
@@ -92,7 +146,9 @@ describe("sync planner", () => {
       const target = repo.addWorktree("lane", { branch: "lane" });
       repo.write("dist/worker/.dev.vars", "SELECTED=1\n");
       repo.write("node_modules/tool/.env", "SELECTED=1\n");
-      const plan = await planSync(repo.dir, target, { config: { requireInclude: false, exclude: [] } });
+      const plan = await planSync(repo.dir, target, {
+        config: { requireInclude: false, exclude: [] },
+      });
       expect(plan.actions.map((action) => [action.path, action.status])).toEqual([
         ["dist/worker/.dev.vars", "copy"],
         ["node_modules/tool/.env", "copy"],
@@ -107,8 +163,14 @@ describe("sync planner", () => {
   test("uses gitignore-style manifests, target ignores, conflicts, and hard exclusions", async () => {
     const repo = makeRepo();
     try {
-      repo.write(".gitignore", ".env\n.scratchpad/\n.cache/\n.claude/worktrees/\nsource-only.local\n");
-      repo.write(".worktreeinclude", "/.env\n/.scratchpad/**\n!/.scratchpad/archive/\n!/.scratchpad/archive/**\n/.cache/**\n/.claude/worktrees/**\n/source-only.local\n");
+      repo.write(
+        ".gitignore",
+        ".env\n.scratchpad/\n.cache/\n.claude/worktrees/\nsource-only.local\n",
+      );
+      repo.write(
+        ".worktreeinclude",
+        "/.env\n/.scratchpad/**\n!/.scratchpad/archive/\n!/.scratchpad/archive/**\n/.cache/**\n/.claude/worktrees/**\n/source-only.local\n",
+      );
       repo.commit("sync policy");
       const target = repo.addWorktree("lane", { branch: "lane" });
       repo.write(".env", "A=1\n");
@@ -117,26 +179,38 @@ describe("sync planner", () => {
       repo.write(".cache/large.bin", "cache\n");
       repo.write(".claude/worktrees/private/state", "private\n");
       repo.write("source-only.local", "source\n");
-      writeFileSync(join(target, ".gitignore"), ".env\n.scratchpad/\n.cache/\n.claude/worktrees/\n");
+      writeFileSync(
+        join(target, ".gitignore"),
+        ".env\n.scratchpad/\n.cache/\n.claude/worktrees/\n",
+      );
       mkdirSync(join(target, ".scratchpad"), { recursive: true });
       writeFileSync(join(target, ".scratchpad/STATE.md"), "same\n");
       writeFileSync(join(target, ".env"), "different\n");
 
-      const plan = await planSync(repo.dir, target, { config: { requireInclude: false, exclude: [] } });
+      const plan = await planSync(repo.dir, target, {
+        config: { requireInclude: false, exclude: [] },
+      });
       expect(plan.mode).toBe("manifest");
       expect(plan.manifestHash).toHaveLength(64);
       expect(plan.actions.find((item) => item.path === ".env")?.status).toBe("conflict");
       expect(plan.actions.some((item) => item.path.startsWith(".scratchpad/"))).toBe(false);
       expect(plan.actions.find((item) => item.path === ".cache/large.bin")?.status).toBe("copy");
-      expect(plan.actions.find((item) => item.path === ".claude/worktrees/private/state")?.status).toBe("excluded");
-      expect(plan.actions.find((item) => item.path === "source-only.local")?.reason).toBe("not ignored by target");
+      expect(
+        plan.actions.find((item) => item.path === ".claude/worktrees/private/state")?.status,
+      ).toBe("excluded");
+      expect(plan.actions.find((item) => item.path === "source-only.local")?.reason).toBe(
+        "not ignored by target",
+      );
       expect(plan.actions.some((item) => item.path.includes("archive"))).toBe(false);
 
       const copied = await applySyncPlan(plan);
       expect(copied).toEqual([".cache/large.bin"]);
       expect(readFileSync(join(target, ".env"), "utf8")).toBe("different\n");
 
-      const forced = await planSync(repo.dir, target, { force: true, config: { requireInclude: false, exclude: [] } });
+      const forced = await planSync(repo.dir, target, {
+        force: true,
+        config: { requireInclude: false, exclude: [] },
+      });
       expect(forced.actions.find((item) => item.path === ".env")?.status).toBe("copy");
       await applySyncPlan(forced);
       expect(readFileSync(join(target, ".env"), "utf8")).toBe("A=1\n");
@@ -153,7 +227,9 @@ describe("sync planner", () => {
       const target = repo.addWorktree("lane", { branch: "lane" });
       repo.write(".env", "A=1\n");
       repo.write(".scratchpad/STATE.md", "state\n");
-      const none = await planSync(repo.dir, target, { config: { requireInclude: true, exclude: [] } });
+      const none = await planSync(repo.dir, target, {
+        config: { requireInclude: true, exclude: [] },
+      });
       expect(none.mode).toBe("none");
       expect(none.actions).toEqual([]);
 
@@ -173,8 +249,14 @@ describe("readSyncConfig", () => {
     const root = mkdtempSync(join(tmpdir(), "wt-config-"));
     try {
       mkdirSync(join(root, ".config/wt"), { recursive: true });
-      writeFileSync(join(root, ".config/wt/config.toml"), "[sync]\nrequireInclude = true\nexclude = [\".env.production*\"]\n");
-      expect(readSyncConfig({ HOME: root })).toEqual({ requireInclude: true, exclude: [".env.production*"] });
+      writeFileSync(
+        join(root, ".config/wt/config.toml"),
+        '[sync]\nrequireInclude = true\nexclude = [".env.production*"]\n',
+      );
+      expect(readSyncConfig({ HOME: root })).toEqual({
+        requireInclude: true,
+        exclude: [".env.production*"],
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -224,8 +306,14 @@ test("copyFileNoFollowAt rejects a symlink source without creating a target", ()
   const target = mkdtempSync(join(tmpdir(), "wt-copy-target-"));
   writeFileSync(join(source, "referent"), "outside\n");
   symlinkSync("referent", join(source, "source"));
-  const sourceFd = openSync(source, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-  const destinationFd = openSync(target, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  const sourceFd = openSync(
+    source,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  );
+  const destinationFd = openSync(
+    target,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  );
   try {
     expect(() => copyFileNoFollowAt(sourceFd, "source", destinationFd, "target")).toThrow();
     expect(existsSync(join(target, "target"))).toBe(false);
@@ -274,7 +362,9 @@ test("applySyncPlan preserves a target created after planning", async () => {
     repo.commit("policy");
     const target = repo.addWorktree("lane", { branch: "lane" });
     repo.write(".env", "source\n");
-    const plan = await planSync(repo.dir, target, { config: { requireInclude: false, exclude: [] } });
+    const plan = await planSync(repo.dir, target, {
+      config: { requireInclude: false, exclude: [] },
+    });
     writeFileSync(join(target, ".env"), "late target\n");
     await expect(applySyncPlan(plan)).rejects.toThrow("target changed while copying");
     expect(readFileSync(join(target, ".env"), "utf8")).toBe("late target\n");
@@ -291,7 +381,9 @@ test("applySyncPlan does not copy beneath a late target directory", async () => 
     repo.commit("policy");
     const target = repo.addWorktree("lane", { branch: "lane" });
     repo.write(".env", "source\n");
-    const plan = await planSync(repo.dir, target, { config: { requireInclude: false, exclude: [] } });
+    const plan = await planSync(repo.dir, target, {
+      config: { requireInclude: false, exclude: [] },
+    });
     mkdirSync(join(target, ".env"));
     await expect(applySyncPlan(plan)).rejects.toThrow();
     expect(existsSync(join(target, ".env/.env"))).toBe(false);
@@ -309,7 +401,9 @@ test("applySyncPlan rejects a symlinked destination parent", async () => {
     repo.commit("policy");
     const target = repo.addWorktree("lane", { branch: "lane" });
     repo.write(".vscode/STATE.md", "source\n");
-    const plan = await planSync(repo.dir, target, { config: { requireInclude: false, exclude: [] } });
+    const plan = await planSync(repo.dir, target, {
+      config: { requireInclude: false, exclude: [] },
+    });
     symlinkSync(outside, join(target, ".vscode"));
     await expect(applySyncPlan(plan)).rejects.toThrow("unsafe symlink or non-directory parent");
     expect(existsSync(join(outside, "STATE.md"))).toBe(false);
@@ -331,7 +425,10 @@ test("forced sync replaces a leaf symlink without touching its referent", async 
     const referent = join(outside, "referent");
     writeFileSync(referent, "outside\n");
     symlinkSync(referent, join(target, ".env"));
-    const plan = await planSync(repo.dir, target, { force: true, config: { requireInclude: false, exclude: [] } });
+    const plan = await planSync(repo.dir, target, {
+      force: true,
+      config: { requireInclude: false, exclude: [] },
+    });
     await applySyncPlan(plan);
     expect(lstatSync(join(target, ".env")).isSymbolicLink()).toBe(false);
     expect(readFileSync(join(target, ".env"), "utf8")).toBe("source\n");

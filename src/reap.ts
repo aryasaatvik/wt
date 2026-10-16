@@ -11,7 +11,15 @@ import { discoverPrimaries, humanSize } from "./ls.ts";
 import { resolvePrimaryRepo } from "./git.ts";
 import { inspectSubmodules, removeWorktree } from "./rm.ts";
 import { runSafetyPipeline, type SafetyResult } from "./safety.ts";
-import { fetchPrs, prForCommit, prStateFor, remoteRepos, scanWorktrees, type ScanOptions, type WorktreeStatus } from "./scan.ts";
+import {
+  fetchPrs,
+  prForCommit,
+  prStateFor,
+  remoteRepos,
+  scanWorktrees,
+  type ScanOptions,
+  type WorktreeStatus,
+} from "./scan.ts";
 import { bold, dim, gray, green, pool, red, runAsync, yellow } from "./term.ts";
 import { err, ExitError } from "./ui.ts";
 import { classifyWorktree, isRemovable, verdictLabel, type Verdict } from "./verdict.ts";
@@ -46,7 +54,13 @@ async function planRepo(repoRoot: string, opts: ReapOptions): Promise<ReapEntry[
     async (record): Promise<ReapEntry> => {
       const base = { record, repoRoot, safety: null as SafetyResult | null };
       if (record.locked) {
-        return { ...base, verdict: null, verdictText: "-", disposition: "keep", reasons: ["locked"] };
+        return {
+          ...base,
+          verdict: null,
+          verdictText: "-",
+          disposition: "keep",
+          reasons: ["locked"],
+        };
       }
       if (record.prunable) {
         return {
@@ -57,7 +71,10 @@ async function planRepo(repoRoot: string, opts: ReapOptions): Promise<ReapEntry[
           reasons: ["prunable (directory missing — use git worktree prune)"],
         };
       }
-      const verdict = await classifyWorktree(record.path, record.prState === "merged" ? record.mergeCommit : null);
+      const verdict = await classifyWorktree(
+        record.path,
+        record.prState === "merged" ? record.mergeCommit : null,
+      );
       const verdictText = verdictLabel(verdict, record.prState, record.prNumber);
       if (!isRemovable(verdict.kind, record.prState)) {
         const reason =
@@ -105,7 +122,14 @@ async function planRepo(repoRoot: string, opts: ReapOptions): Promise<ReapEntry[
           safety,
         };
       }
-      return { ...base, verdict, verdictText, disposition: "remove", reasons: [verdictText], safety };
+      return {
+        ...base,
+        verdict,
+        verdictText,
+        disposition: "remove",
+        reasons: [verdictText],
+        safety,
+      };
     },
   );
 }
@@ -142,7 +166,10 @@ export interface ApplyOptions {
   env?: Record<string, string | undefined>;
 }
 
-export async function applyReap(entries: ReapEntry[], opts: ApplyOptions = {}): Promise<ApplyResult> {
+export async function applyReap(
+  entries: ReapEntry[],
+  opts: ApplyOptions = {},
+): Promise<ApplyResult> {
   const removed: ReapEntry[] = [];
   const skipped: ApplyResult["skipped"] = [];
   const reposByRoot = new Map<string, Awaited<ReturnType<typeof remoteRepos>>>();
@@ -164,7 +191,8 @@ export async function applyReap(entries: ReapEntry[], opts: ApplyOptions = {}): 
       repos = await remoteRepos(repoRoot);
       reposByRoot.set(repoRoot, repos);
     }
-    if (!prsByRoot.has(repoRoot)) prsByRoot.set(repoRoot, await fetchPrs(repoRoot, opts.env ?? process.env));
+    if (!prsByRoot.has(repoRoot))
+      prsByRoot.set(repoRoot, await fetchPrs(repoRoot, opts.env ?? process.env));
     const branchPr = prStateFor(record.branch, prsByRoot.get(repoRoot) ?? null);
     const commitPr =
       repos.length > 0
@@ -183,7 +211,11 @@ export async function applyReap(entries: ReapEntry[], opts: ApplyOptions = {}): 
       skipped.push({ entry, reason });
       continue;
     }
-    if (record.prState === "merged" && record.mergeCommit && latestPr?.mergeCommit !== record.mergeCommit) {
+    if (
+      record.prState === "merged" &&
+      record.mergeCommit &&
+      latestPr?.mergeCommit !== record.mergeCommit
+    ) {
       skipped.push({ entry, reason: "PR merge commit changed since planning" });
       continue;
     }
@@ -191,7 +223,11 @@ export async function applyReap(entries: ReapEntry[], opts: ApplyOptions = {}): 
       record.path,
       latestPrState === "merged" ? latestPr?.mergeCommit : null,
     );
-    if (verdictNow.kind !== entry.verdict.kind || verdictNow.ref !== entry.verdict.ref || !isRemovable(verdictNow.kind, latestPrState)) {
+    if (
+      verdictNow.kind !== entry.verdict.kind ||
+      verdictNow.ref !== entry.verdict.ref ||
+      !isRemovable(verdictNow.kind, latestPrState)
+    ) {
       skipped.push({ entry, reason: "landing verdict changed since planning" });
       continue;
     }
@@ -203,7 +239,10 @@ export async function applyReap(entries: ReapEntry[], opts: ApplyOptions = {}): 
     }
     const safety = await runSafetyPipeline(record.path, repoRoot);
     if (!safety.ok) {
-      skipped.push({ entry, reason: safety.flags.map((f) => `[${f.kind}] ${f.detail}`).join("; ") });
+      skipped.push({
+        entry,
+        reason: safety.flags.map((f) => `[${f.kind}] ${f.detail}`).join("; "),
+      });
       continue;
     }
     const rm = await removeWorktree(record.path, repoRoot, submodules.paths);
@@ -217,7 +256,11 @@ export async function applyReap(entries: ReapEntry[], opts: ApplyOptions = {}): 
   return { removed, skipped };
 }
 
-export function renderReapReport(entries: ReapEntry[], apply: boolean, applied?: ApplyResult): string {
+export function renderReapReport(
+  entries: ReapEntry[],
+  apply: boolean,
+  applied?: ApplyResult,
+): string {
   // After --apply, rows reflect what actually happened: a planned removal
   // that apply skipped (TOCTOU, late safety flag) must not read as REMOVE.
   const removedPaths = new Set(applied?.removed.map((e) => e.record.path));

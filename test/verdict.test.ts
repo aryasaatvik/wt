@@ -179,9 +179,13 @@ describe("classifyWorktree", () => {
 
       expect((await classifyWorktree(upper)).kind).toBe("STRANDED");
       expect(await classifyWorktree(upper, mergeCommit)).toEqual({
-        kind: "CONTENT_LANDED", ref: mergeCommit, total: 2,
+        kind: "CONTENT_LANDED",
+        ref: mergeCommit,
+        total: 2,
       });
-      expect((await classifyWorktree(upper, repo.git("rev-parse", "HEAD").trim())).kind).toBe("STRANDED");
+      expect((await classifyWorktree(upper, repo.git("rev-parse", "HEAD").trim())).kind).toBe(
+        "STRANDED",
+      );
       expect((await classifyWorktree(upper, "0".repeat(40))).kind).toBe("STRANDED");
     } finally {
       repo.rm();
@@ -203,7 +207,9 @@ describe("classifyWorktree", () => {
       repo.git("push", "origin", "main");
       expect((await classifyWorktree(wt)).kind).toBe("PUSHED_ONLY");
       expect(await classifyWorktree(wt, mergeCommit)).toEqual({
-        kind: "CONTENT_LANDED", ref: mergeCommit, total: 1,
+        kind: "CONTENT_LANDED",
+        ref: mergeCommit,
+        total: 1,
       });
     } finally {
       repo.rm();
@@ -224,7 +230,10 @@ describe("classifyWorktree", () => {
       repo.git("revert", "--no-edit", mergeCommit);
       repo.git("push", "origin", "main");
       expect(await classifyWorktree(wt, mergeCommit)).toEqual({
-        kind: "STRANDED", ref: "origin/main", differing: 1, total: 1,
+        kind: "STRANDED",
+        ref: "origin/main",
+        differing: 1,
+        total: 1,
       });
     } finally {
       repo.rm();
@@ -246,7 +255,10 @@ describe("classifyWorktree", () => {
       await Bun.write(`${wt}/feature.txt`, "second\n");
       repo.gitIn(wt, "commit", "-am", "later work");
       repo.gitIn(wt, "push", "-u", "origin", "feat/later");
-      expect(await classifyWorktree(wt, mergeCommit)).toEqual({ kind: "PUSHED_ONLY", ref: "origin/feat/later" });
+      expect(await classifyWorktree(wt, mergeCommit)).toEqual({
+        kind: "PUSHED_ONLY",
+        ref: "origin/feat/later",
+      });
     } finally {
       repo.rm();
     }

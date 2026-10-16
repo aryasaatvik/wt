@@ -102,23 +102,50 @@ export async function inspectSubmodules(
     return { ok: false, reason: String(error instanceof Error ? error.message : error) };
   }
   for (const path of paths) {
-    const status = await runAsync(["git", "-C", join(wtPath, path), "status", "--porcelain", "--untracked-files=all", "--ignored"]);
-    if (!status.ok) return { ok: false, reason: `submodule ${path} cannot be inspected: ${status.stderr.trim()}` };
-    if (status.stdout.trim()) return { ok: false, reason: `submodule ${path} has changes, untracked, or ignored files` };
+    const status = await runAsync([
+      "git",
+      "-C",
+      join(wtPath, path),
+      "status",
+      "--porcelain",
+      "--untracked-files=all",
+      "--ignored",
+    ]);
+    if (!status.ok)
+      return {
+        ok: false,
+        reason: `submodule ${path} cannot be inspected: ${status.stderr.trim()}`,
+      };
+    if (status.stdout.trim())
+      return { ok: false, reason: `submodule ${path} has changes, untracked, or ignored files` };
   }
   return { ok: true, paths };
 }
 
 async function submoduleConfig(configFile: string): Promise<Array<[string, string]>> {
-  const res = await runAsync(["git", "config", "--file", configFile, "--null", "--get-regexp", "^submodule\\."]);
+  const res = await runAsync([
+    "git",
+    "config",
+    "--file",
+    configFile,
+    "--null",
+    "--get-regexp",
+    "^submodule\\.",
+  ]);
   if (!res.ok) return [];
-  return res.stdout.split("\0").filter(Boolean).map((entry) => {
-    const at = entry.indexOf("\n");
-    return at === -1 ? [entry, ""] : [entry.slice(0, at), entry.slice(at + 1)];
-  });
+  return res.stdout
+    .split("\0")
+    .filter(Boolean)
+    .map((entry) => {
+      const at = entry.indexOf("\n");
+      return at === -1 ? [entry, ""] : [entry.slice(0, at), entry.slice(at + 1)];
+    });
 }
 
-async function restoreSubmoduleConfig(configFile: string, entries: Array<[string, string]>): Promise<boolean> {
+async function restoreSubmoduleConfig(
+  configFile: string,
+  entries: Array<[string, string]>,
+): Promise<boolean> {
   const current = new Set((await submoduleConfig(configFile)).map(([key]) => key));
   let ok = true;
   for (const [key, value] of entries) {
@@ -147,9 +174,17 @@ export async function removeWorktree(
     return removed.ok ? { ok: true, retained: null } : { ok: false, reason: removed.stderr.trim() };
   }
 
-  const dirs = await runAsync(["git", "-C", wtPath, "rev-parse", "--absolute-git-dir", "--git-common-dir"]);
+  const dirs = await runAsync([
+    "git",
+    "-C",
+    wtPath,
+    "rev-parse",
+    "--absolute-git-dir",
+    "--git-common-dir",
+  ]);
   const [gitDir, commonRel] = dirs.stdout.trim().split("\n");
-  if (!dirs.ok || !gitDir || !commonRel) return { ok: false, reason: "cannot locate the lane's Git directory" };
+  if (!dirs.ok || !gitDir || !commonRel)
+    return { ok: false, reason: "cannot locate the lane's Git directory" };
   const commonDir = resolve(wtPath, commonRel);
   const configFile = join(commonDir, "config");
   const snapshot = await submoduleConfig(configFile);
@@ -176,15 +211,25 @@ export async function removeWorktree(
         rmdirSync(archive);
       } catch {}
     }
-    if (!(await restoreSubmoduleConfig(configFile, snapshot))) notes.push("submodule config not fully restored");
-    const reinit = await runAsync(["git", "-C", wtPath, "submodule", "update", "--init", "--recursive"]);
+    if (!(await restoreSubmoduleConfig(configFile, snapshot)))
+      notes.push("submodule config not fully restored");
+    const reinit = await runAsync([
+      "git",
+      "-C",
+      wtPath,
+      "submodule",
+      "update",
+      "--init",
+      "--recursive",
+    ]);
     if (!reinit.ok) notes.push(`submodules not reinitialized: ${reinit.stderr.trim()}`);
     return { ok: false as const, reason: notes.join("; ") };
   };
 
   const deinit = await runAsync(["git", "-C", wtPath, "submodule", "deinit", "--all"]);
   if (!deinit.ok) return recover(`submodule deinit failed: ${deinit.stderr.trim()}`);
-  if (!(await restoreSubmoduleConfig(configFile, snapshot))) return recover("cannot restore the primary's submodule config");
+  if (!(await restoreSubmoduleConfig(configFile, snapshot)))
+    return recover("cannot restore the primary's submodule config");
   if (existsSync(source)) {
     try {
       renameSync(source, destination);
@@ -220,10 +265,12 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
 
   const targetPath = realpathSync.native(wt.path);
   const callerPaths = [opts.cwd, process.env.PWD];
-  if (callerPaths.some((path) => {
-    const canonical = path ? canonicalDirectory(path) : null;
-    return canonical !== null && containsPath(targetPath, canonical);
-  })) {
+  if (
+    callerPaths.some((path) => {
+      const canonical = path ? canonicalDirectory(path) : null;
+      return canonical !== null && containsPath(targetPath, canonical);
+    })
+  ) {
     err(`Cannot remove ${bold(target)} from inside that worktree`);
     detail("Run wt rm from the primary checkout or another worktree.");
     throw new ExitError(1);

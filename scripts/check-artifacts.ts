@@ -50,8 +50,10 @@ try {
     const extraction = spawnSync(["tar", "-xzf", archive, "-C", unpacked]);
     assert.equal(extraction.exitCode, 0, extraction.stderr.toString());
     assert(readFileSync(join(unpacked, "wt")).length > 0);
-    assert.equal(readFileSync(join(unpacked, "completions/wt.zsh"), "utf8"),
-      readFileSync(resolve(import.meta.dir, "../completions/wt.zsh"), "utf8"));
+    assert.equal(
+      readFileSync(join(unpacked, "completions/wt.zsh"), "utf8"),
+      readFileSync(resolve(import.meta.dir, "../completions/wt.zsh"), "utf8"),
+    );
     assert.match(readFileSync(join(unpacked, "README.txt"), "utf8"), /No bun runtime needed/);
     if (label === `${process.platform}-${process.arch}`) {
       smoke(join(unpacked, "wt"));

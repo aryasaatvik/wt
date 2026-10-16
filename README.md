@@ -112,7 +112,13 @@ The preview fingerprints all files, directories, modes, and symlink text without
   "state": "legacy",
   "sourceHash": "<snapshot hash from preview>",
   "entries": [
-    { "path": "note.md", "kind": "file", "hash": "<entry hash from preview>", "mode": 420, "status": "review" }
+    {
+      "path": "note.md",
+      "kind": "file",
+      "hash": "<entry hash from preview>",
+      "mode": 420,
+      "status": "review"
+    }
   ],
   "resolutions": [
     {

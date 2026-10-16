@@ -85,7 +85,9 @@ describe("cmdRm", () => {
       } finally {
         console.error = original;
       }
-      expect(errors.join("\n")).toContain("Run wt rm from the primary checkout or another worktree");
+      expect(errors.join("\n")).toContain(
+        "Run wt rm from the primary checkout or another worktree",
+      );
       expect(existsSync(wt)).toBe(true);
     } finally {
       repo.rm();
@@ -215,13 +217,25 @@ describe("cmdRm", () => {
       repo.git("-c", "protocol.file.allow=always", "submodule", "add", module.dir, "vendor/module");
       repo.commit("add submodule");
       const wt = repo.addWorktree("with-module", { branch: "feat/module" });
-      repo.gitIn(wt, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive");
+      repo.gitIn(
+        wt,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "update",
+        "--init",
+        "--recursive",
+      );
       await cmdRm("feat/module", { deleteBranch: false, cwd: repo.dir });
       expect(existsSync(wt)).toBe(false);
       expect(repo.git("worktree", "list", "--porcelain")).not.toContain(wt);
-      const archives = readdirSync(join(repo.dir, ".git")).filter((name) => name.startsWith("wt-submodules-"));
+      const archives = readdirSync(join(repo.dir, ".git")).filter((name) =>
+        name.startsWith("wt-submodules-"),
+      );
       expect(archives).toHaveLength(1);
-      expect(existsSync(join(repo.dir, ".git", archives[0]!, "modules/vendor/module/HEAD"))).toBe(true);
+      expect(existsSync(join(repo.dir, ".git", archives[0]!, "modules/vendor/module/HEAD"))).toBe(
+        true,
+      );
       // deinit in the lane must not unregister the primary's submodule
       expect(repo.git("config", "--get", "submodule.vendor/module.url").trim()).toBe(module.dir);
       expect(repo.git("submodule", "status").trim().startsWith("-")).toBe(false);
@@ -238,13 +252,23 @@ describe("cmdRm", () => {
       repo.git("-c", "protocol.file.allow=always", "submodule", "add", module.dir, "vendor/module");
       repo.commit("add submodule");
       const wt = repo.addWorktree("with-module", { branch: "feat/module" });
-      repo.gitIn(wt, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive");
+      repo.gitIn(
+        wt,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "update",
+        "--init",
+        "--recursive",
+      );
       await Bun.write(join(wt, "vendor/module/untracked.txt"), "keep\n");
       const errors: string[] = [];
       const original = console.error;
       console.error = (...args: unknown[]) => void errors.push(args.map(String).join(" "));
       try {
-        await expect(cmdRm("feat/module", { deleteBranch: false, cwd: repo.dir })).rejects.toThrow();
+        await expect(
+          cmdRm("feat/module", { deleteBranch: false, cwd: repo.dir }),
+        ).rejects.toThrow();
       } finally {
         console.error = original;
       }
@@ -264,13 +288,23 @@ describe("cmdRm", () => {
       repo.git("-c", "protocol.file.allow=always", "submodule", "add", module.dir, "vendor/module");
       repo.commit("add submodule");
       const wt = repo.addWorktree("with-module", { branch: "feat/module" });
-      repo.gitIn(wt, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive");
+      repo.gitIn(
+        wt,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "update",
+        "--init",
+        "--recursive",
+      );
       await Bun.write(join(wt, "vendor/module/README.md"), "changed\n");
       const errors: string[] = [];
       const original = console.error;
       console.error = (...args: unknown[]) => void errors.push(args.map(String).join(" "));
       try {
-        await expect(cmdRm("feat/module", { deleteBranch: false, cwd: repo.dir })).rejects.toThrow();
+        await expect(
+          cmdRm("feat/module", { deleteBranch: false, cwd: repo.dir }),
+        ).rejects.toThrow();
       } finally {
         console.error = original;
       }
