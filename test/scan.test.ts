@@ -185,7 +185,7 @@ fi
       // advance main on origin, then a detached lane pinned at the old head is behind
       repo.git("commit", "--allow-empty", "-m", "main moves on");
       repo.git("push", "origin", "main");
-      const behindWt = repo.addWorktree("lane-behind", { detachAt: firstHead });
+      repo.addWorktree("lane-behind", { detachAt: firstHead });
 
       // dirty lane
       const dirtyWt = repo.addWorktree("feat-dirty", { branch: "feat/dirty" });

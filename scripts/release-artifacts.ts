@@ -71,9 +71,8 @@ if (status) {
 // --os/--cpu '*': fetch native deps for every platform so cross-compiled
 // binaries (opentui) link correctly.
 run("bun", ["install", "--frozen-lockfile", "--os", "*", "--cpu", "*"]);
-run("bun", ["run", "typecheck"]);
-run("bun", ["test"]);
-run("bun", ["scripts/build-release-artifacts.ts"]);
+// A failed check exits in run(), before any tag, release, or upload.
+run("bun", ["run", "release:check"]);
 
 const artifactNames = (await readdir(releaseRoot)).filter(
   (name) => name.endsWith(".tar.gz") || name === "SHA256SUMS",
