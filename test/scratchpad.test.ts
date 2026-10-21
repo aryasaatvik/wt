@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { cmdNew } from "../src/create.ts";
+import { cmdNew, readProvenance } from "../src/create.ts";
 import { cmdRm } from "../src/rm.ts";
 import { runSafetyPipeline } from "../src/safety.ts";
 import { ensureSharedScratchpad, scratchpadState } from "../src/scratchpad.ts";
@@ -62,6 +62,88 @@ test("sync excludes Scratchpad even when explicitly selected and forced", async 
     repo.rm();
   }
 });
+
+test.each(["legacy", "manifest"])(
+  "%s sync ignores nested evidence repositories beneath the shared Scratchpad link",
+  async (mode) => {
+    const repo = makeRepo();
+    try {
+      repo.write(".gitignore", ".scratchpad/\n.env\n.scratchpad-copy/\n");
+      if (mode === "manifest") {
+        repo.write(".worktreeinclude", "/.env\n/.scratchpad/\n/.scratchpad-copy/**\n");
+      }
+      repo.commit("sync policy");
+      repo.write(".env", "FIXTURE=1\n");
+      repo.write(".scratchpad/evidence/project/README.md", "retained evidence\n");
+      repo.gitIn(join(repo.dir, ".scratchpad/evidence/project"), "init", "-b", "main");
+      repo.write(".scratchpad-copy/README.md", "separate directory\n");
+      const lane = repo.addWorktree("lane");
+      await ensureSharedScratchpad(repo.dir, lane);
+
+      const plan = await planSync(repo.dir, lane, {
+        force: true,
+        config: { requireInclude: false, exclude: [] },
+      });
+      expect(plan.mode).toBe(mode);
+      expect(plan.actions.some(({ path }) => path.startsWith(".scratchpad/"))).toBe(false);
+      expect(await applySyncPlan(plan)).toEqual(
+        mode === "manifest" ? [".env", ".scratchpad-copy/README.md"] : [".env"],
+      );
+      expect(readFileSync(join(lane, ".env"), "utf8")).toBe("FIXTURE=1\n");
+      expect(realpathSync(join(lane, ".scratchpad"))).toBe(join(repo.dir, ".scratchpad"));
+      expect(readFileSync(join(lane, ".scratchpad/evidence/project/README.md"), "utf8")).toBe(
+        "retained evidence\n",
+      );
+    } finally {
+      repo.rm();
+    }
+  },
+);
+
+test.each(["legacy", "manifest"])(
+  "%s creation reaches install and post-install with nested Scratchpad evidence repositories",
+  async (mode) => {
+    const repo = makeRepo();
+    try {
+      repo.write(".gitignore", ".scratchpad/\n.env\n");
+      repo.write("package.json", '{"packageManager":"bun@1.4.3"}\n');
+      repo.write("wt.toml", '[create]\npostInstall = "bun run build"\n');
+      if (mode === "manifest") repo.write(".worktreeinclude", "/.env\n/.scratchpad/\n");
+      repo.commit("creation policy");
+      repo.write(".env", "FIXTURE=1\n");
+      repo.write(".scratchpad/evidence/project/README.md", "retained evidence\n");
+      repo.gitIn(join(repo.dir, ".scratchpad/evidence/project"), "init", "-b", "main");
+      const phases: string[] = [];
+
+      const lane = await cmdNew("lane", "main", {
+        cwd: repo.dir,
+        verbose: false,
+        install: true,
+        extraFlags: [],
+        installRunner: async (path) => {
+          expect(readFileSync(join(path, ".env"), "utf8")).toBe("FIXTURE=1\n");
+          phases.push("install");
+          return 0;
+        },
+        postInstallRunner: async (_path, command) => {
+          expect(command).toBe("bun run build");
+          phases.push("post-install");
+          return 0;
+        },
+      });
+
+      expect(phases).toEqual(["install", "post-install"]);
+      expect(readProvenance(lane)?.phase).toBe("ready");
+      expect(readProvenance(lane)?.syncedFiles).toEqual([".env"]);
+      expect(realpathSync(join(lane, ".scratchpad"))).toBe(join(repo.dir, ".scratchpad"));
+      expect(readFileSync(join(lane, ".scratchpad/evidence/project/README.md"), "utf8")).toBe(
+        "retained evidence\n",
+      );
+    } finally {
+      repo.rm();
+    }
+  },
+);
 
 test("a primary link to external storage supports creation, shared writes and safe removal", async () => {
   const repo = makeRepo();
