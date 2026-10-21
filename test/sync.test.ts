@@ -44,7 +44,6 @@ describe("isAllowed", () => {
     expect(isAllowed("apps/api/.env.local")).toBe(true);
     expect(isAllowed(".dev.vars")).toBe(true);
     expect(isAllowed("apps/web/.dev.vars")).toBe(true);
-    expect(isAllowed(".scratchpad/notes.md")).toBe(true);
     expect(isAllowed(".vscode/settings.json")).toBe(true);
     expect(isAllowed(".idea/workspace.xml")).toBe(true);
     expect(isAllowed(".zed/settings.json")).toBe(true);
@@ -52,6 +51,7 @@ describe("isAllowed", () => {
   });
 
   test("drops artifact trees and unrelated gitignored files", () => {
+    expect(isAllowed(".scratchpad/notes.md")).toBe(false);
     expect(
       isAllowed(
         "apps/e2e/runs/local/billing-refund-permanent-ses-rejection-releases-the-reserved-autumn-unit",

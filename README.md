@@ -184,10 +184,6 @@ When the repository has a `.worktreeinclude`, it is the source of truth for file
 # Local development environment
 /.env
 
-# Active scratchpad entrypoints
-/.scratchpad/README.md
-/.scratchpad/STATE.md
-
 # Local agent preferences
 /.claude/settings.local.json
 ```
@@ -197,7 +193,6 @@ A path is copied only when it is ignored in both the source and target worktree,
 Without `.worktreeinclude`, wt 2.x retains the legacy config allowlist and prints a notice:
 
 - **Env**: `.env`, `.env.*`, `.dev.vars` (never `*.example` or `*.sample`), at any depth
-- **Scratchpad**: `.scratchpad/`
 - **Editor**: `.vscode/`, `.idea/`, `.zed/`
 - **Agent**: `.claude/` except `.claude/worktrees`
 
@@ -209,10 +204,10 @@ Set `sync.requireInclude = true` to copy nothing from repositories without a man
 # ~/.config/wt/config.toml
 [sync]
 requireInclude = true
-exclude = [".env.production*", ".scratchpad/archive/**"]
+exclude = [".env.production*"]
 ```
 
-There is deliberately no `.worktreeignore`: repository policy stays in one ordered pattern file, where `!` rules express exceptions, and machine-specific exclusions stay in user configuration. Hard exclusions are limited to Git and worktree-manager ownership state (`.git`, `.claude/worktrees`, `.conductor`), so a repository may explicitly include a large cache when that is intentional.
+There is deliberately no `.worktreeignore`: repository policy stays in one ordered pattern file, where `!` rules express exceptions, and machine-specific exclusions stay in user configuration. The root `.scratchpad` is shared through its link and excluded from sync discovery even when a manifest selects it. Other hard exclusions protect Git and worktree-manager ownership state (`.git`, `.claude/worktrees`, `.conductor`), so a repository may explicitly include a large cache when that is intentional.
 
 Selected dangling symlinks are recreated with `symlink` rather than handed to rsync. macOS openrsync `stat()`s the missing target and would otherwise fail the whole create (rsync exit 23).
 

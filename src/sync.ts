@@ -30,13 +30,12 @@ export function isEnvFile(rel: string): boolean {
   return !/\.(?:example|sample)$/.test(name) && ENV_BASENAME.test(name);
 }
 
-export const SYNC_ALLOW_DIRS = [".scratchpad", ".vscode", ".idea", ".zed", ".claude"] as const;
+export const SYNC_ALLOW_DIRS = [".vscode", ".idea", ".zed", ".claude"] as const;
 const ALLOW_DIR_SET = new Set<string>(SYNC_ALLOW_DIRS);
 const LEGACY_PATHSPECS = [
   ".env",
   ".env.*",
   ".dev.vars",
-  ".scratchpad",
   ".vscode",
   ".idea",
   ".zed",
@@ -44,7 +43,6 @@ const LEGACY_PATHSPECS = [
   ":(glob)**/.env",
   ":(glob)**/.env.*",
   ":(glob)**/.dev.vars",
-  ":(glob)**/.scratchpad/**",
   ":(glob)**/.vscode/**",
   ":(glob)**/.idea/**",
   ":(glob)**/.zed/**",
@@ -92,12 +90,12 @@ function matchesPathPrefix(rel: string, excluded: string): boolean {
   );
 }
 
+function isScratchpadPath(rel: string): boolean {
+  return rel === ".scratchpad" || rel.startsWith(".scratchpad/");
+}
+
 export function isExcluded(rel: string): boolean {
-  return (
-    rel === ".scratchpad" ||
-    rel.startsWith(".scratchpad/") ||
-    SYNC_EXCLUDE.some((entry) => matchesPathPrefix(rel, entry))
-  );
+  return isScratchpadPath(rel) || SYNC_EXCLUDE.some((entry) => matchesPathPrefix(rel, entry));
 }
 
 export interface SyncConfig {
@@ -174,7 +172,8 @@ async function gitIgnored(repo: string, pathspecs: readonly string[] = []): Prom
     ":(top,exclude).scratchpad",
   ]);
   if (!result.ok) throw new Error(`git ls-files failed in ${repo}:\n${result.stderr}`);
-  return result.stdout.split("\0").filter(Boolean);
+  // Git can emit nested repository entries despite the Scratchpad pathspec exclusion.
+  return result.stdout.split("\0").filter((path) => path.length > 0 && !isScratchpadPath(path));
 }
 
 export async function selectedByManifest(repo: string, manifestPath: string): Promise<string[]> {
@@ -191,7 +190,7 @@ export async function selectedByManifest(repo: string, manifestPath: string): Pr
     ":(top,exclude).scratchpad",
   ]);
   if (!result.ok) throw new Error(`failed to evaluate ${manifestPath}:\n${result.stderr}`);
-  return result.stdout.split("\0").filter(Boolean);
+  return result.stdout.split("\0").filter((path) => path.length > 0 && !isScratchpadPath(path));
 }
 
 async function ignoredByTarget(target: string, candidates: string[]): Promise<Set<string>> {
@@ -603,7 +602,7 @@ export async function applySyncPlan(plan: SyncPlan, verbose = false): Promise<st
   const files = plan.actions
     .filter((action) => action.status === "copy")
     .map((action) => action.path);
-  if (files.some((path) => path === ".scratchpad" || path.startsWith(".scratchpad/"))) {
+  if (files.some(isScratchpadPath)) {
     throw new Error(
       "Scratchpad is shared state and cannot be copied by sync; regenerate this plan",
     );
