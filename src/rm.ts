@@ -1,6 +1,15 @@
 // wt rm — remove a worktree by branch, slug, or path. Never forces.
 
-import { existsSync, mkdtempSync, realpathSync, renameSync, rmdirSync, statSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmdirSync,
+  statSync,
+} from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { listWorktrees, resolvePrimaryRepo, type WorktreeInfo } from "./git.ts";
 import { envDriftResolution, runSafetyPipeline, type SafetyFlag } from "./safety.ts";
@@ -77,6 +86,20 @@ function canonicalDirectory(path: string): string | null {
 }
 
 async function initializedSubmodules(wtPath: string): Promise<string[]> {
+  const index = await runAsync(["git", "-C", wtPath, "ls-files", "--stage", "-z"]);
+  if (!index.ok) throw new Error(`Cannot inspect gitlinks: ${index.stderr.trim()}`);
+  let allUninitialized = true;
+  for (const entry of index.stdout.split("\0").filter((line) => line.startsWith("160000 "))) {
+    const match = /^160000 [0-9a-f]{40,64} 0\t([\s\S]+)$/.exec(entry);
+    if (!match) throw new Error("Cannot parse gitlink index entry; not removing");
+    const path = join(wtPath, match[1]!);
+    const stat = lstatSync(path, { throwIfNoEntry: false });
+    if (stat && (!stat.isDirectory() || readdirSync(path).length > 0)) allUninitialized = false;
+  }
+  // Empty gitlinks hold no local data, even when vendored history lacks a
+  // root .gitmodules mapping and `git submodule status` cannot list them.
+  if (allUninitialized) return [];
+
   const listed = await runAsync(["git", "-C", wtPath, "submodule", "status", "--recursive"]);
   if (!listed.ok) throw new Error(`Cannot inspect submodules: ${listed.stderr.trim()}`);
   const paths: string[] = [];

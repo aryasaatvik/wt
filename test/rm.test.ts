@@ -245,6 +245,41 @@ describe("cmdRm", () => {
     }
   });
 
+  test("removes an empty uninitialized gitlink without a .gitmodules mapping", async () => {
+    const repo = makeRepo();
+    try {
+      const head = repo.git("rev-parse", "HEAD").trim();
+      repo.git("update-index", "--add", "--cacheinfo", `160000,${head},vendor/module`);
+      repo.git("commit", "-m", "add unmapped gitlink");
+      const wt = repo.addWorktree("unmapped", { branch: "feat/unmapped" });
+      expect(readdirSync(join(wt, "vendor/module"))).toEqual([]);
+      await cmdRm("feat/unmapped", { deleteBranch: false, cwd: repo.dir });
+      expect(existsSync(wt)).toBe(false);
+      expect(branchExists(repo.dir, "feat/unmapped")).toBe(true);
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("preserves files inside an uninitialized gitlink without a mapping", async () => {
+    const repo = makeRepo();
+    try {
+      const head = repo.git("rev-parse", "HEAD").trim();
+      repo.git("update-index", "--add", "--cacheinfo", `160000,${head},vendor/module`);
+      repo.git("commit", "-m", "add unmapped gitlink");
+      const wt = repo.addWorktree("unmapped", { branch: "feat/unmapped" });
+      const evidence = join(wt, "vendor/module/.local-evidence");
+      await Bun.write(evidence, "keep\n");
+      await expect(
+        cmdRm("feat/unmapped", { deleteBranch: false, cwd: repo.dir }),
+      ).rejects.toThrow();
+      expect(await Bun.file(evidence).text()).toBe("keep\n");
+      expect(branchExists(repo.dir, "feat/unmapped")).toBe(true);
+    } finally {
+      repo.rm();
+    }
+  });
+
   test("refuses a dirty submodule without deinitializing it", async () => {
     const module = makeRepo();
     const repo = makeRepo();
