@@ -32,7 +32,7 @@ ln -s ~/Developer/wt/bin/wt ~/.local/bin/wt
 ln -s ~/Developer/wt/completions/wt.zsh ~/.zsh/completions/wt.zsh
 ```
 
-Requires: `git`, `rsync`, [`ni`](https://github.com/antfu/ni), and [`bun`](https://bun.sh) >= 1.3 when running from source.
+Requires: `git`, `rsync`, [`ni`](https://github.com/antfu/ni), and [`bun`](https://bun.sh) >= 1.4.4 when running from source.
 
 ## Usage
 
