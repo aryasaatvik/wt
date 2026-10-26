@@ -13,7 +13,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { listWorktrees, resolvePrimaryRepo, type WorktreeInfo } from "./git.ts";
 import { envDriftResolution, runSafetyPipeline, type SafetyFlag } from "./safety.ts";
-import { bold, dim, runAsync } from "./term.ts";
+import { bold, dim, run, runAsync } from "./term.ts";
 import { detail, err, ExitError, info, log } from "./ui.ts";
 
 export interface RmOptions {
@@ -30,7 +30,7 @@ export interface RmOptions {
  */
 export function resolveTarget(target: string, cwd: string): WorktreeInfo | null {
   const repoRoot = resolvePrimaryRepo(cwd);
-  const worktrees = listWorktrees(repoRoot).filter((w) => w.path !== repoRoot);
+  const worktrees = listWorktrees(repoRoot).filter((w) => !w.isMain && w.path !== repoRoot);
 
   const byBranch = worktrees.find((w) => w.branch === target);
   if (byBranch) return byBranch;
@@ -47,7 +47,9 @@ export function resolveTarget(target: string, cwd: string): WorktreeInfo | null 
     if (byPath) return byPath;
     try {
       const owner = resolvePrimaryRepo(abs);
-      return listWorktrees(owner).find((w) => w.path === abs && w.path !== owner) ?? null;
+      return (
+        listWorktrees(owner).find((w) => !w.isMain && w.path === abs && w.path !== owner) ?? null
+      );
     } catch {
       return null;
     }
@@ -58,7 +60,7 @@ export function resolveTarget(target: string, cwd: string): WorktreeInfo | null 
 function listForError(cwd: string): string {
   const repoRoot = resolvePrimaryRepo(cwd);
   return listWorktrees(repoRoot)
-    .filter((w) => w.path !== repoRoot)
+    .filter((w) => !w.isMain && w.path !== repoRoot)
     .map((w) => `      ${w.branch ?? `(detached ${w.head.slice(0, 7)} · ${basename(w.path)})`}`)
     .join("\n");
 }
@@ -191,6 +193,16 @@ export async function removeWorktree(
   repoRoot: string,
   submodules: string[],
 ): Promise<{ ok: true; retained: string | null } | { ok: false; reason: string }> {
+  const primary = resolvePrimaryRepo(repoRoot);
+  const common = run(["git", "-C", primary, "rev-parse", "--git-common-dir"]).trim();
+  const target = canonicalDirectory(wtPath) ?? resolve(wtPath);
+  if (
+    !common ||
+    target === primary ||
+    target === canonicalDirectory(resolve(primary, common)) ||
+    listWorktrees(primary).some((wt) => wt.isMain && wt.path === target)
+  )
+    return { ok: false, reason: "cannot remove the main worktree or Git common directory" };
   const remove = () => runAsync(["git", "-C", repoRoot, "worktree", "remove", wtPath]);
   if (submodules.length === 0) {
     const removed = await remove();

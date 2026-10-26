@@ -273,7 +273,7 @@ async function probe(
     branch: wt.branch,
     head: wt.head,
     detached: wt.detached,
-    primary: wt.path === repoRoot,
+    primary: wt.isMain || wt.path === repoRoot,
     locked: wt.locked,
     prunable: wt.prunable,
     dirty: dirtyLines.length > 0,
