@@ -2,7 +2,12 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { type CreateSource, resolveCreateSource, resolvePrimaryRepo } from "./git.ts";
+import {
+  type CreateSource,
+  listWorktrees,
+  resolveCreateSource,
+  resolvePrimaryRepo,
+} from "./git.ts";
 import { applySyncPlan, planSync } from "./sync.ts";
 import { ensureSharedScratchpad } from "./scratchpad.ts";
 import { bold, dim, run, runAsync, spinner } from "./term.ts";
@@ -152,6 +157,52 @@ export async function cmdNew(
   mkdirSync(dirname(wtDir), { recursive: true });
 
   const existing = source.kind === "local";
+  if (existing && base !== undefined) {
+    const baseHead = run([
+      "git",
+      "-C",
+      repoRoot,
+      "rev-parse",
+      "--verify",
+      `${base}^{commit}`,
+    ]).trim();
+    if (!baseHead) throw new Error(`cannot resolve worktree base ${base}`);
+    const ancestor = await runAsync([
+      "git",
+      "-C",
+      repoRoot,
+      "merge-base",
+      "--is-ancestor",
+      source.head,
+      baseHead,
+    ]);
+    if (ancestor.code !== 0 && ancestor.code !== 1)
+      throw new Error(`cannot compare ${branch} with ${base}: ${ancestor.stderr.trim()}`);
+    if (ancestor.ok && source.head !== baseHead) {
+      if (listWorktrees(repoRoot).some((wt) => wt.branch === branch))
+        throw new Error(`cannot fast-forward ${branch}: branch is already checked out`);
+      const behind = run([
+        "git",
+        "-C",
+        repoRoot,
+        "rev-list",
+        "--count",
+        `${source.head}..${baseHead}`,
+      ]).trim();
+      const updated = await runAsync([
+        "git",
+        "-C",
+        repoRoot,
+        "update-ref",
+        source.ref,
+        baseHead,
+        source.head,
+      ]);
+      if (!updated.ok) throw new Error(`cannot fast-forward ${branch}: ${updated.stderr.trim()}`);
+      source.head = baseHead;
+      info(`Fast-forwarded ${branch} to ${base} (${behind} commits behind, no unique commits)`);
+    }
+  }
   const trackingFlag = opts.extraFlags.some(
     (flag) =>
       flag === "-t" || flag === "--track" || flag.startsWith("--track=") || flag === "--no-track",

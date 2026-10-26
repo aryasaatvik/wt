@@ -61,13 +61,63 @@ describe("cmdNew", () => {
     }
   });
 
-  test("checks out an existing branch instead of creating one", async () => {
+  test("reuses an existing branch equal to the supplied base", async () => {
     const repo = makeRepo();
     try {
       repo.git("branch", "feat/existing");
+      const head = repo.git("rev-parse", "main").trim();
       const wtDir = await cmdNew("feat/existing", "main", { ...OPTS, cwd: repo.dir });
       expect(repo.gitIn(wtDir, "branch", "--show-current").trim()).toBe("feat/existing");
+      expect(repo.gitIn(wtDir, "rev-parse", "HEAD").trim()).toBe(head);
       expect(readProvenance(wtDir)?.base).toBeNull();
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("fast-forwards a merged local branch to an advanced explicit base", async () => {
+    const repo = makeRepo();
+    try {
+      repo.git("checkout", "-b", "fix/merged");
+      repo.write("fix.txt", "fixed\n");
+      repo.commit("fix");
+      repo.git("checkout", "main");
+      repo.git("merge", "--ff-only", "fix/merged");
+      repo.git("commit", "--allow-empty", "-m", "advance one");
+      repo.git("commit", "--allow-empty", "-m", "advance two");
+      const head = repo.git("rev-parse", "main").trim();
+      const wtDir = await cmdNew("fix/merged", "main", { ...OPTS, cwd: repo.dir });
+      expect(repo.gitIn(wtDir, "rev-parse", "HEAD").trim()).toBe(head);
+      expect(repo.git("rev-parse", "fix/merged").trim()).toBe(head);
+      expect(readProvenance(wtDir)?.source?.head).toBe(head);
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("leaves a stale local branch unchanged without an explicit base", async () => {
+    const repo = makeRepo();
+    try {
+      repo.git("branch", "stale");
+      const head = repo.git("rev-parse", "stale").trim();
+      repo.git("commit", "--allow-empty", "-m", "advance main");
+      const wtDir = await cmdNew("stale", undefined, { ...OPTS, cwd: repo.dir });
+      expect(repo.gitIn(wtDir, "rev-parse", "HEAD").trim()).toBe(head);
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("does not move a stale branch already checked out in a worktree", async () => {
+    const repo = makeRepo();
+    try {
+      const lane = repo.addWorktree("in-use", { branch: "in-use" });
+      const head = repo.git("rev-parse", "in-use").trim();
+      repo.git("commit", "--allow-empty", "-m", "advance main");
+      await expect(cmdNew("in-use", "main", { ...OPTS, cwd: repo.dir })).rejects.toThrow(
+        "already checked out",
+      );
+      expect(repo.gitIn(lane, "rev-parse", "HEAD").trim()).toBe(head);
     } finally {
       repo.rm();
     }
@@ -79,10 +129,13 @@ describe("cmdNew", () => {
       repo.addOrigin();
       repo.git("branch", "topic");
       repo.git("push", "origin", "topic");
+      repo.git("checkout", "topic");
       repo.write("local.txt", "local\n");
       const localHead = repo.commit("local topic");
-      repo.git("branch", "-f", "topic", localHead);
-      const wtDir = await cmdNew("topic", "missing-base", { ...OPTS, cwd: repo.dir });
+      repo.git("checkout", "main");
+      repo.write("main.txt", "main\n");
+      repo.commit("advance main");
+      const wtDir = await cmdNew("topic", "main", { ...OPTS, cwd: repo.dir });
       expect(repo.gitIn(wtDir, "rev-parse", "HEAD").trim()).toBe(localHead);
       expect(readProvenance(wtDir)?.source).toEqual({
         kind: "local",
