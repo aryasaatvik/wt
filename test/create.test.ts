@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { existsSync, lstatSync, mkdirSync, readlinkSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readlinkSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { cmdNew, readProvenance } from "../src/create.ts";
 import { defaultBase, resolvePrimaryRepo } from "../src/git.ts";
@@ -109,6 +109,35 @@ describe("cmdNew", () => {
       expect(await Bun.file(join(destination, "keep.txt")).text()).toBe("existing data\n");
       expect(repo.git("worktree", "list", "--porcelain")).not.toContain(destination);
     } finally {
+      repo.rm();
+    }
+  });
+
+  test("keeps a fast-forwarded branch when a failing hook leaves the lane registered", async () => {
+    const repo = makeRepo();
+    const warning = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      repo.git("branch", "fix/stale");
+      repo.write("base.txt", "new base content\n");
+      const baseHead = repo.commit("advance main");
+      const hooks = join(repo.root, "hooks");
+      mkdirSync(hooks);
+      const hook = join(hooks, "post-checkout");
+      await Bun.write(hook, "#!/bin/sh\nexit 1\n");
+      chmodSync(hook, 0o755);
+      repo.git("config", "core.hooksPath", hooks);
+      const destination = join(repo.root, "repo-worktrees", "fix-stale");
+      await expect(cmdNew("fix/stale", "main", { ...OPTS, cwd: repo.dir })).rejects.toThrow();
+      expect(repo.git("rev-parse", "fix/stale").trim()).toBe(baseHead);
+      expect(repo.gitIn(destination, "rev-parse", "HEAD").trim()).toBe(baseHead);
+      expect(repo.git("worktree", "list", "--porcelain")).toContain(destination);
+      expect(repo.gitIn(destination, "status", "--porcelain").trim()).toBe("");
+      expect(await Bun.file(join(destination, "base.txt")).text()).toBe("new base content\n");
+      expect(warning).toHaveBeenCalledWith(
+        `  ✗ Worktree exists at ${destination}, but setup did not complete; keeping fix/stale unchanged`,
+      );
+    } finally {
+      warning.mockRestore();
       repo.rm();
     }
   });

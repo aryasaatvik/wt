@@ -254,18 +254,27 @@ export async function cmdNew(
     }
   } catch (error) {
     if (fastForwardedFrom !== null && !laneCreated) {
-      const restored = await runAsync([
-        "git",
-        "-C",
-        repoRoot,
-        "update-ref",
-        source.ref,
-        fastForwardedFrom,
-        source.head,
-      ]);
-      if (!restored.ok) {
-        err(`Could not restore ${branch} after lane creation failed (the branch may have changed)`);
-        detail(restored.stderr);
+      const lane = listWorktrees(repoRoot).find((wt) => wt.branch === branch || wt.path === wtDir);
+      if (lane) {
+        err(
+          `Worktree exists at ${lane.path}, but setup did not complete; keeping ${branch} unchanged`,
+        );
+      } else {
+        const restored = await runAsync([
+          "git",
+          "-C",
+          repoRoot,
+          "update-ref",
+          source.ref,
+          fastForwardedFrom,
+          source.head,
+        ]);
+        if (!restored.ok) {
+          err(
+            `Could not restore ${branch} after lane creation failed (the branch may have changed)`,
+          );
+          detail(restored.stderr);
+        }
       }
     }
     throw error;
