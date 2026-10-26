@@ -81,7 +81,13 @@ export function listWorktrees(cwd: string): WorktreeInfo[] {
   }
   // Submodules can report their common Git directory as the main path.
   // Probe and display the actual checkout, while retaining its main identity.
-  if (entries[0]) entries[0].path = resolvePrimaryRepo(cwd);
+  if (entries[0]) {
+    try {
+      entries[0].path = resolvePrimaryRepo(cwd);
+    } catch {
+      // Bare repositories and missing primaries can still have usable linked lanes.
+    }
+  }
   return entries;
 }
 

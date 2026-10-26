@@ -16,6 +16,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { listWorktrees, resolvePrimaryRepo } from "../src/git.ts";
+import { cmdSync } from "../src/sync-command.ts";
 import { slugFor } from "../src/create.ts";
 import {
   applySyncPlan,
@@ -29,6 +31,58 @@ import {
   syncFiles,
 } from "../src/sync.ts";
 import { makeRepo } from "./harness.ts";
+
+test("lists bare-repository lanes and plans a branch-to-current sync without a primary checkout", async () => {
+  const repo = makeRepo();
+  try {
+    repo.write(".gitignore", ".env\n");
+    repo.write(".worktreeinclude", "/.env\n");
+    repo.commit("sync config");
+    const bare = join(repo.root, "bare.git");
+    const source = join(repo.root, "other");
+    const target = join(repo.root, "current");
+    repo.git("clone", "--bare", repo.dir, bare);
+    repo.gitIn(
+      repo.root,
+      "--git-dir",
+      bare,
+      "worktree",
+      "add",
+      "-b",
+      "other-branch",
+      source,
+      "main",
+    );
+    repo.gitIn(repo.root, "--git-dir", bare, "worktree", "add", target, "main");
+    writeFileSync(join(source, ".env"), "LOCAL=source\n");
+    expect(() => resolvePrimaryRepo(target)).toThrow();
+    const worktrees = listWorktrees(target);
+    expect(worktrees).toHaveLength(3);
+    expect(worktrees[0]).toMatchObject({ path: bare, isMain: true });
+    expect(worktrees.find((wt) => wt.path === source)).toMatchObject({
+      branch: "other-branch",
+      isMain: false,
+    });
+    const result = await cmdSync({
+      cwd: target,
+      from: "other-branch",
+      to: "current",
+      dryRun: true,
+      json: true,
+      force: false,
+      verbose: false,
+    });
+    expect(result.plan.source).toBe(source);
+    expect(result.plan.target).toBe(target);
+    expect(result.plan.actions).toContainEqual(
+      expect.objectContaining({ path: ".env", status: "copy" }),
+    );
+    expect(result.copied).toEqual([]);
+    expect(existsSync(join(target, ".env"))).toBe(false);
+  } finally {
+    repo.rm();
+  }
+});
 
 describe("slugFor", () => {
   test("replaces every slash with a dash", () => {
