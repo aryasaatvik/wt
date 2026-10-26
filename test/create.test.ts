@@ -113,6 +113,22 @@ describe("cmdNew", () => {
     }
   });
 
+  test("restores a fast-forwarded branch when another branch's lane occupies the destination", async () => {
+    const repo = makeRepo();
+    try {
+      repo.git("branch", "feat/foo");
+      const head = repo.git("rev-parse", "feat/foo").trim();
+      repo.git("commit", "--allow-empty", "-m", "advance main");
+      const destination = join(repo.root, "repo-worktrees", "feat-foo");
+      repo.git("worktree", "add", "-b", "feat-foo", destination, "main");
+      await expect(cmdNew("feat/foo", "main", { ...OPTS, cwd: repo.dir })).rejects.toThrow();
+      expect(repo.git("rev-parse", "feat/foo").trim()).toBe(head);
+      expect(repo.gitIn(destination, "branch", "--show-current").trim()).toBe("feat-foo");
+    } finally {
+      repo.rm();
+    }
+  });
+
   test("keeps a fast-forwarded branch when a failing hook leaves the lane registered", async () => {
     const repo = makeRepo();
     const warning = spyOn(console, "error").mockImplementation(() => {});

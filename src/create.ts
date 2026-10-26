@@ -254,7 +254,7 @@ export async function cmdNew(
     }
   } catch (error) {
     if (fastForwardedFrom !== null && !laneCreated) {
-      const lane = listWorktrees(repoRoot).find((wt) => wt.branch === branch || wt.path === wtDir);
+      const lane = listWorktrees(repoRoot).find((wt) => wt.branch === branch);
       if (lane) {
         err(
           `Worktree exists at ${lane.path}, but setup did not complete; keeping ${branch} unchanged`,
