@@ -95,6 +95,24 @@ describe("cmdNew", () => {
     }
   });
 
+  test("restores a fast-forwarded branch when the destination already contains files", async () => {
+    const repo = makeRepo();
+    try {
+      repo.git("branch", "fix/stale");
+      const head = repo.git("rev-parse", "fix/stale").trim();
+      repo.git("commit", "--allow-empty", "-m", "advance main");
+      const destination = join(repo.root, "repo-worktrees", "fix-stale");
+      mkdirSync(destination, { recursive: true });
+      await Bun.write(join(destination, "keep.txt"), "existing data\n");
+      await expect(cmdNew("fix/stale", "main", { ...OPTS, cwd: repo.dir })).rejects.toThrow();
+      expect(repo.git("rev-parse", "fix/stale").trim()).toBe(head);
+      expect(await Bun.file(join(destination, "keep.txt")).text()).toBe("existing data\n");
+      expect(repo.git("worktree", "list", "--porcelain")).not.toContain(destination);
+    } finally {
+      repo.rm();
+    }
+  });
+
   test("leaves a stale local branch unchanged without an explicit base", async () => {
     const repo = makeRepo();
     try {
