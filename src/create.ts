@@ -11,7 +11,7 @@ import {
 import { applySyncPlan, planSync } from "./sync.ts";
 import { ensureSharedScratchpad } from "./scratchpad.ts";
 import { bold, dim, run, runAsync, spinner } from "./term.ts";
-import { detail, err, ExitError, info, log } from "./ui.ts";
+import { detail, err, ExitError, info, log, warn } from "./ui.ts";
 
 export interface CreateOptions {
   verbose: boolean;
@@ -167,6 +167,24 @@ export async function cmdNew(
       `${base}^{commit}`,
     ]).trim();
     if (!baseHead) throw new Error(`cannot resolve worktree base ${base}`);
+    const counts = await runAsync([
+      "git",
+      "-C",
+      repoRoot,
+      "rev-list",
+      "--left-right",
+      "--count",
+      `${baseHead}...${source.head}`,
+    ]);
+    const match = /^(\d+)\s+(\d+)$/.exec(counts.stdout.trim());
+    if (!counts.ok || !match)
+      throw new Error(`cannot compare ${branch} with ${base}: ${counts.stderr.trim()}`);
+    const behind = Number(match[1]);
+    const ahead = Number(match[2]);
+    if (behind > 0 && ahead > 0)
+      warn(
+        `Reusing ${branch} unchanged: ${behind} ${behind === 1 ? "commit" : "commits"} behind ${base} with ${ahead} unique ${ahead === 1 ? "commit" : "commits"} (squash-merged? delete the branch to start from ${base})`,
+      );
     const ancestor = await runAsync([
       "git",
       "-C",
@@ -181,14 +199,6 @@ export async function cmdNew(
     if (ancestor.ok && source.head !== baseHead) {
       if (listWorktrees(repoRoot).some((wt) => wt.branch === branch))
         throw new Error(`cannot fast-forward ${branch}: branch is already checked out`);
-      const behind = run([
-        "git",
-        "-C",
-        repoRoot,
-        "rev-list",
-        "--count",
-        `${source.head}..${baseHead}`,
-      ]).trim();
       const updated = await runAsync([
         "git",
         "-C",

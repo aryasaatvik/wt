@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readlinkSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { cmdNew, readProvenance } from "../src/create.ts";
@@ -125,6 +125,7 @@ describe("cmdNew", () => {
 
   test("prefers a divergent local branch over origin and the supplied base", async () => {
     const repo = makeRepo();
+    const warning = spyOn(console, "error").mockImplementation(() => {});
     try {
       repo.addOrigin();
       repo.git("branch", "topic");
@@ -137,12 +138,33 @@ describe("cmdNew", () => {
       repo.commit("advance main");
       const wtDir = await cmdNew("topic", "main", { ...OPTS, cwd: repo.dir });
       expect(repo.gitIn(wtDir, "rev-parse", "HEAD").trim()).toBe(localHead);
+      expect(warning).toHaveBeenCalledWith(
+        "  ! Reusing topic unchanged: 1 commit behind main with 1 unique commit (squash-merged? delete the branch to start from main)",
+      );
       expect(readProvenance(wtDir)?.source).toEqual({
         kind: "local",
         ref: "refs/heads/topic",
         head: localHead,
       });
     } finally {
+      warning.mockRestore();
+      repo.rm();
+    }
+  });
+
+  test("reuses an ahead-only local branch without a divergence warning", async () => {
+    const repo = makeRepo();
+    const warning = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      repo.git("checkout", "-b", "topic");
+      repo.write("local.txt", "local\n");
+      const localHead = repo.commit("local topic");
+      repo.git("checkout", "main");
+      const wtDir = await cmdNew("topic", "main", { ...OPTS, cwd: repo.dir });
+      expect(repo.gitIn(wtDir, "rev-parse", "HEAD").trim()).toBe(localHead);
+      expect(warning).not.toHaveBeenCalled();
+    } finally {
+      warning.mockRestore();
       repo.rm();
     }
   });

@@ -1,9 +1,10 @@
 // Status-line output matching the v1 bash look: two-space indent, ✓/→/✗.
 
-import { cyan, green, red } from "./term.ts";
+import { cyan, green, red, yellow } from "./term.ts";
 
 export const log = (m: string) => console.log(`  ${green("✓")} ${m}`);
 export const info = (m: string) => console.log(`  ${cyan("→")} ${m}`);
+export const warn = (m: string) => console.error(`  ${yellow("!")} ${m}`);
 export const err = (m: string) => console.error(`  ${red("✗")} ${m}`);
 
 /** Print indented detail lines (e.g. a captured stderr) to stderr. */

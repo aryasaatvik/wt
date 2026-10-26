@@ -17,6 +17,7 @@ ${bold("Commands:")}
   wt [new|create] <branch> [base] [flags]
                        Prefer local branch, then same-name origin branch
                        Explicit base fast-forwards local branches with no unique commits
+                       Warns when reusing a local branch diverged from an explicit base
                        New branch base defaults to origin/HEAD, main/master/dev
                        Runs wt.toml [create] postInstall after dependencies
                        Extra flags are passed to git worktree add
