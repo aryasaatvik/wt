@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { cmdLs } from "../src/ls.ts";
+import { removeWorktree, resolveTarget } from "../src/rm.ts";
 import { branchExists } from "../src/git.ts";
 import { applyReap, planReap, renderReapReport, type ReapEntry } from "../src/reap.ts";
 import { makeRepo, type FixtureRepo } from "./harness.ts";
@@ -92,6 +94,44 @@ describe("wt reap", () => {
       repo.rm();
     }
   }, 30000);
+
+  test("never offers or removes a submodule's main checkout or common Git directory", async () => {
+    const module = makeRepo();
+    const repo = makeRepo();
+    try {
+      repo.git("-c", "protocol.file.allow=always", "submodule", "add", module.dir, "vendor/module");
+      repo.commit("add submodule");
+      const checkout = join(repo.dir, "vendor/module");
+      const gitdir = repo.gitIn(checkout, "rev-parse", "--absolute-git-dir").trim();
+      const entries = await planReap({ all: false, cwd: checkout });
+      expect(entries).toEqual([]);
+      expect(renderReapReport(entries, false)).not.toContain("WOULD REMOVE");
+      const json = await cmdLs({
+        json: true,
+        all: false,
+        cwd: checkout,
+        scan: { sizeMode: "skip" },
+      });
+      expect(JSON.parse(json)).toMatchObject([{ path: checkout, primary: true }]);
+      for (const target of [checkout, gitdir, "main"]) {
+        expect(resolveTarget(target, checkout)).toBeNull();
+        expect(resolveTarget(target, repo.dir)).toBeNull();
+      }
+      for (const target of [checkout, gitdir]) {
+        expect(await removeWorktree(target, checkout, [])).toEqual({
+          ok: false,
+          reason: "cannot remove the main worktree or Git common directory",
+        });
+      }
+      expect(existsSync(gitdir)).toBe(true);
+      expect(repo.gitIn(checkout, "rev-parse", "HEAD").trim()).toBe(
+        module.git("rev-parse", "HEAD").trim(),
+      );
+    } finally {
+      repo.rm();
+      module.rm();
+    }
+  });
 
   test("removes a lane with clean submodules and skips a dirty one", async () => {
     const module = makeRepo();

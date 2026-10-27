@@ -12,6 +12,26 @@ import {
 } from "../src/scan.ts";
 import { makeRepo } from "./harness.ts";
 
+test("scans a submodule's actual main checkout and its linked lane", async () => {
+  const module = makeRepo();
+  const repo = makeRepo();
+  try {
+    repo.git("-c", "protocol.file.allow=always", "submodule", "add", module.dir, "vendor/module");
+    repo.commit("add submodule");
+    const checkout = join(repo.dir, "vendor/module");
+    const lane = join(repo.root, "module-lane");
+    repo.gitIn(checkout, "worktree", "add", "-b", "lane", lane);
+    writeFileSync(join(checkout, "dirty.txt"), "main checkout data\n");
+    const records = await scanWorktrees(lane, { sizeMode: "skip" });
+    expect(records).toHaveLength(2);
+    expect(records[0]).toMatchObject({ path: checkout, primary: true, dirty: true });
+    expect(records[1]).toMatchObject({ path: lane, primary: false, dirty: false });
+  } finally {
+    repo.rm();
+    module.rm();
+  }
+});
+
 describe("prStateFor", () => {
   const prs: PrInfo[] = [
     { headRefName: "feat/a", state: "OPEN", number: 12, mergeCommit: null },

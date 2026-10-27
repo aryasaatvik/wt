@@ -2,11 +2,16 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { type CreateSource, resolveCreateSource, resolvePrimaryRepo } from "./git.ts";
+import {
+  type CreateSource,
+  listWorktrees,
+  resolveCreateSource,
+  resolvePrimaryRepo,
+} from "./git.ts";
 import { applySyncPlan, planSync } from "./sync.ts";
 import { ensureSharedScratchpad } from "./scratchpad.ts";
 import { bold, dim, run, runAsync, spinner } from "./term.ts";
-import { detail, err, ExitError, info, log } from "./ui.ts";
+import { detail, err, ExitError, info, log, warn } from "./ui.ts";
 
 export interface CreateOptions {
   verbose: boolean;
@@ -152,39 +157,127 @@ export async function cmdNew(
   mkdirSync(dirname(wtDir), { recursive: true });
 
   const existing = source.kind === "local";
-  const trackingFlag = opts.extraFlags.some(
-    (flag) =>
-      flag === "-t" || flag === "--track" || flag.startsWith("--track=") || flag === "--no-track",
-  );
-  const newBranchFlags = opts.extraFlags.map((flag) => (flag === "-t" ? "--track" : flag));
-  const addArgs = existing
-    ? ["git", "-C", repoRoot, "worktree", "add", wtDir, branch, ...opts.extraFlags]
-    : [
+  let fastForwardedFrom: string | null = null;
+  let laneCreated = false;
+  try {
+    if (existing && base !== undefined) {
+      const baseHead = run([
         "git",
         "-C",
         repoRoot,
-        "worktree",
-        "add",
-        ...(trackingFlag ? [] : ["--no-track"]),
-        "-b",
-        branch,
-        wtDir,
-        source.ref,
-        ...newBranchFlags,
-      ];
-  info(
-    existing
-      ? `Checking out existing branch ${bold(branch)}`
-      : `Creating worktree ${bold(branch)} from ${dim(source.ref)}`,
-  );
-  info(`Source: ${source.ref} (${source.head})`);
-  const spin = spinner("Creating worktree");
-  const added = await runAsync(addArgs);
-  spin.stop();
-  if (!added.ok) {
-    err("Failed to create worktree");
-    detail(added.stderr);
-    throw new ExitError(1);
+        "rev-parse",
+        "--verify",
+        `${base}^{commit}`,
+      ]).trim();
+      if (!baseHead) throw new Error(`cannot resolve worktree base ${base}`);
+      const counts = await runAsync([
+        "git",
+        "-C",
+        repoRoot,
+        "rev-list",
+        "--left-right",
+        "--count",
+        `${baseHead}...${source.head}`,
+      ]);
+      const match = /^(\d+)\s+(\d+)$/.exec(counts.stdout.trim());
+      if (!counts.ok || !match)
+        throw new Error(`cannot compare ${branch} with ${base}: ${counts.stderr.trim()}`);
+      const behind = Number(match[1]);
+      const ahead = Number(match[2]);
+      if (behind > 0 && ahead > 0)
+        warn(
+          `Reusing ${branch} unchanged: ${behind} ${behind === 1 ? "commit" : "commits"} behind ${base} with ${ahead} unique ${ahead === 1 ? "commit" : "commits"} (squash-merged? delete the branch to start from ${base})`,
+        );
+      const ancestor = await runAsync([
+        "git",
+        "-C",
+        repoRoot,
+        "merge-base",
+        "--is-ancestor",
+        source.head,
+        baseHead,
+      ]);
+      if (ancestor.code !== 0 && ancestor.code !== 1)
+        throw new Error(`cannot compare ${branch} with ${base}: ${ancestor.stderr.trim()}`);
+      if (ancestor.ok && source.head !== baseHead) {
+        if (listWorktrees(repoRoot).some((wt) => wt.branch === branch))
+          throw new Error(`cannot fast-forward ${branch}: branch is already checked out`);
+        const updated = await runAsync([
+          "git",
+          "-C",
+          repoRoot,
+          "update-ref",
+          source.ref,
+          baseHead,
+          source.head,
+        ]);
+        if (!updated.ok) throw new Error(`cannot fast-forward ${branch}: ${updated.stderr.trim()}`);
+        fastForwardedFrom = source.head;
+        source.head = baseHead;
+        info(`Fast-forwarded ${branch} to ${base} (${behind} commits behind, no unique commits)`);
+      }
+    }
+    const trackingFlag = opts.extraFlags.some(
+      (flag) =>
+        flag === "-t" || flag === "--track" || flag.startsWith("--track=") || flag === "--no-track",
+    );
+    const newBranchFlags = opts.extraFlags.map((flag) => (flag === "-t" ? "--track" : flag));
+    const addArgs = existing
+      ? ["git", "-C", repoRoot, "worktree", "add", wtDir, branch, ...opts.extraFlags]
+      : [
+          "git",
+          "-C",
+          repoRoot,
+          "worktree",
+          "add",
+          ...(trackingFlag ? [] : ["--no-track"]),
+          "-b",
+          branch,
+          wtDir,
+          source.ref,
+          ...newBranchFlags,
+        ];
+    info(
+      existing
+        ? `Checking out existing branch ${bold(branch)}`
+        : `Creating worktree ${bold(branch)} from ${dim(source.ref)}`,
+    );
+    info(`Source: ${source.ref} (${source.head})`);
+    const spin = spinner("Creating worktree");
+    const added = await runAsync(addArgs);
+    laneCreated = added.ok;
+    spin.stop();
+    if (!added.ok) {
+      err("Failed to create worktree");
+      detail(added.stderr);
+      throw new ExitError(1);
+    }
+  } catch (error) {
+    if (fastForwardedFrom !== null && !laneCreated) {
+      const lane = listWorktrees(repoRoot).find((wt) => wt.branch === branch);
+      if (lane) {
+        err(
+          `Worktree exists at ${lane.path}, but setup did not complete; keeping ${branch} unchanged`,
+        );
+      } else {
+        const restored = await runAsync([
+          "git",
+          "-C",
+          repoRoot,
+          "update-ref",
+          source.ref,
+          fastForwardedFrom,
+          source.head,
+        ]);
+        if (!restored.ok) {
+          err(
+            `Could not restore ${branch} after lane creation failed (the branch may have changed)`,
+          );
+          detail(restored.stderr);
+        }
+      }
+    }
+    throw error;
   }
   log(`Worktree created at ${dim(wtDir)}`);
 

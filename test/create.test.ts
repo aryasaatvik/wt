@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, mkdirSync, readlinkSync, symlinkSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readlinkSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { cmdNew, readProvenance } from "../src/create.ts";
 import { defaultBase, resolvePrimaryRepo } from "../src/git.ts";
@@ -61,13 +61,126 @@ describe("cmdNew", () => {
     }
   });
 
-  test("checks out an existing branch instead of creating one", async () => {
+  test("reuses an existing branch equal to the supplied base", async () => {
     const repo = makeRepo();
     try {
       repo.git("branch", "feat/existing");
+      const head = repo.git("rev-parse", "main").trim();
       const wtDir = await cmdNew("feat/existing", "main", { ...OPTS, cwd: repo.dir });
       expect(repo.gitIn(wtDir, "branch", "--show-current").trim()).toBe("feat/existing");
+      expect(repo.gitIn(wtDir, "rev-parse", "HEAD").trim()).toBe(head);
       expect(readProvenance(wtDir)?.base).toBeNull();
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("fast-forwards a merged local branch to an advanced explicit base", async () => {
+    const repo = makeRepo();
+    try {
+      repo.git("checkout", "-b", "fix/merged");
+      repo.write("fix.txt", "fixed\n");
+      repo.commit("fix");
+      repo.git("checkout", "main");
+      repo.git("merge", "--ff-only", "fix/merged");
+      repo.git("commit", "--allow-empty", "-m", "advance one");
+      repo.git("commit", "--allow-empty", "-m", "advance two");
+      const head = repo.git("rev-parse", "main").trim();
+      const wtDir = await cmdNew("fix/merged", "main", { ...OPTS, cwd: repo.dir });
+      expect(repo.gitIn(wtDir, "rev-parse", "HEAD").trim()).toBe(head);
+      expect(repo.git("rev-parse", "fix/merged").trim()).toBe(head);
+      expect(readProvenance(wtDir)?.source?.head).toBe(head);
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("restores a fast-forwarded branch when the destination already contains files", async () => {
+    const repo = makeRepo();
+    try {
+      repo.git("branch", "fix/stale");
+      const head = repo.git("rev-parse", "fix/stale").trim();
+      repo.git("commit", "--allow-empty", "-m", "advance main");
+      const destination = join(repo.root, "repo-worktrees", "fix-stale");
+      mkdirSync(destination, { recursive: true });
+      await Bun.write(join(destination, "keep.txt"), "existing data\n");
+      await expect(cmdNew("fix/stale", "main", { ...OPTS, cwd: repo.dir })).rejects.toThrow();
+      expect(repo.git("rev-parse", "fix/stale").trim()).toBe(head);
+      expect(await Bun.file(join(destination, "keep.txt")).text()).toBe("existing data\n");
+      expect(repo.git("worktree", "list", "--porcelain")).not.toContain(destination);
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("restores a fast-forwarded branch when another branch's lane occupies the destination", async () => {
+    const repo = makeRepo();
+    try {
+      repo.git("branch", "feat/foo");
+      const head = repo.git("rev-parse", "feat/foo").trim();
+      repo.git("commit", "--allow-empty", "-m", "advance main");
+      const destination = join(repo.root, "repo-worktrees", "feat-foo");
+      repo.git("worktree", "add", "-b", "feat-foo", destination, "main");
+      await expect(cmdNew("feat/foo", "main", { ...OPTS, cwd: repo.dir })).rejects.toThrow();
+      expect(repo.git("rev-parse", "feat/foo").trim()).toBe(head);
+      expect(repo.gitIn(destination, "branch", "--show-current").trim()).toBe("feat-foo");
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("keeps a fast-forwarded branch when a failing hook leaves the lane registered", async () => {
+    const repo = makeRepo();
+    const warning = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      repo.git("branch", "fix/stale");
+      repo.write("base.txt", "new base content\n");
+      const baseHead = repo.commit("advance main");
+      const hooks = join(repo.root, "hooks");
+      mkdirSync(hooks);
+      const hook = join(hooks, "post-checkout");
+      await Bun.write(hook, "#!/bin/sh\nexit 1\n");
+      chmodSync(hook, 0o755);
+      repo.git("config", "core.hooksPath", hooks);
+      const destination = join(repo.root, "repo-worktrees", "fix-stale");
+      await expect(cmdNew("fix/stale", "main", { ...OPTS, cwd: repo.dir })).rejects.toThrow();
+      expect(repo.git("rev-parse", "fix/stale").trim()).toBe(baseHead);
+      expect(repo.gitIn(destination, "rev-parse", "HEAD").trim()).toBe(baseHead);
+      expect(repo.git("worktree", "list", "--porcelain")).toContain(destination);
+      expect(repo.gitIn(destination, "status", "--porcelain").trim()).toBe("");
+      expect(await Bun.file(join(destination, "base.txt")).text()).toBe("new base content\n");
+      expect(warning).toHaveBeenCalledWith(
+        `  ✗ Worktree exists at ${destination}, but setup did not complete; keeping fix/stale unchanged`,
+      );
+    } finally {
+      warning.mockRestore();
+      repo.rm();
+    }
+  });
+
+  test("leaves a stale local branch unchanged without an explicit base", async () => {
+    const repo = makeRepo();
+    try {
+      repo.git("branch", "stale");
+      const head = repo.git("rev-parse", "stale").trim();
+      repo.git("commit", "--allow-empty", "-m", "advance main");
+      const wtDir = await cmdNew("stale", undefined, { ...OPTS, cwd: repo.dir });
+      expect(repo.gitIn(wtDir, "rev-parse", "HEAD").trim()).toBe(head);
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test("does not move a stale branch already checked out in a worktree", async () => {
+    const repo = makeRepo();
+    try {
+      const lane = repo.addWorktree("in-use", { branch: "in-use" });
+      const head = repo.git("rev-parse", "in-use").trim();
+      repo.git("commit", "--allow-empty", "-m", "advance main");
+      await expect(cmdNew("in-use", "main", { ...OPTS, cwd: repo.dir })).rejects.toThrow(
+        "already checked out",
+      );
+      expect(repo.gitIn(lane, "rev-parse", "HEAD").trim()).toBe(head);
     } finally {
       repo.rm();
     }
@@ -75,21 +188,46 @@ describe("cmdNew", () => {
 
   test("prefers a divergent local branch over origin and the supplied base", async () => {
     const repo = makeRepo();
+    const warning = spyOn(console, "error").mockImplementation(() => {});
     try {
       repo.addOrigin();
       repo.git("branch", "topic");
       repo.git("push", "origin", "topic");
+      repo.git("checkout", "topic");
       repo.write("local.txt", "local\n");
       const localHead = repo.commit("local topic");
-      repo.git("branch", "-f", "topic", localHead);
-      const wtDir = await cmdNew("topic", "missing-base", { ...OPTS, cwd: repo.dir });
+      repo.git("checkout", "main");
+      repo.write("main.txt", "main\n");
+      repo.commit("advance main");
+      const wtDir = await cmdNew("topic", "main", { ...OPTS, cwd: repo.dir });
       expect(repo.gitIn(wtDir, "rev-parse", "HEAD").trim()).toBe(localHead);
+      expect(warning).toHaveBeenCalledWith(
+        "  ! Reusing topic unchanged: 1 commit behind main with 1 unique commit (squash-merged? delete the branch to start from main)",
+      );
       expect(readProvenance(wtDir)?.source).toEqual({
         kind: "local",
         ref: "refs/heads/topic",
         head: localHead,
       });
     } finally {
+      warning.mockRestore();
+      repo.rm();
+    }
+  });
+
+  test("reuses an ahead-only local branch without a divergence warning", async () => {
+    const repo = makeRepo();
+    const warning = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      repo.git("checkout", "-b", "topic");
+      repo.write("local.txt", "local\n");
+      const localHead = repo.commit("local topic");
+      repo.git("checkout", "main");
+      const wtDir = await cmdNew("topic", "main", { ...OPTS, cwd: repo.dir });
+      expect(repo.gitIn(wtDir, "rev-parse", "HEAD").trim()).toBe(localHead);
+      expect(warning).not.toHaveBeenCalled();
+    } finally {
+      warning.mockRestore();
       repo.rm();
     }
   });

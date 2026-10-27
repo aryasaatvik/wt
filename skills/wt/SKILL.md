@@ -57,7 +57,7 @@ wt new x/my-feature --no-post-install
 
 Creates worktree at `../<repo>-worktrees/<slug>/` where slashes in the branch name become dashes (e.g., `x/my-feature` → `x-my-feature`).
 
-An existing local branch wins, followed by a cached same-name `origin/<branch>` ref, even when a base is supplied. Only a genuinely new branch uses the supplied base or defaults to `origin/HEAD`, local `main`/`master`/`dev`, then cached origin `main`/`master`/`dev`. No fetch runs. The terminal prints the selected ref/SHA and the private Git directory's `wt.json` records `source: { kind, ref, head }`; read that marker to verify which source setup used. Primary discovery uses the primary's configuration, including `config.worktree`, and refuses missing or foreign checkout identity.
+An existing local branch wins, followed by a cached same-name `origin/<branch>` ref. With an explicit base, a local branch strictly behind it with no unique commits is safely fast-forwarded before checkout, and a note reports the number of commits. Local branches with unique commits or no explicit base are reused unchanged, with a warning when diverged from an explicit base. A cached same-name origin ref still wins over a supplied base. Only a genuinely new branch uses the supplied base or defaults to `origin/HEAD`, local `main`/`master`/`dev`, then cached origin `main`/`master`/`dev`. No fetch runs. The terminal prints the selected ref/SHA and the private Git directory's `wt.json` records `source: { kind, ref, head }`; read that marker to verify which source setup used. Primary discovery uses the primary's configuration, including `config.worktree`, and refuses missing or foreign checkout identity.
 
 Steps performed:
 

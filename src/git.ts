@@ -40,6 +40,7 @@ export function resolvePrimaryRepo(cwd: string): string {
 
 export interface WorktreeInfo {
   path: string;
+  isMain: boolean;
   head: string;
   branch: string | null;
   detached: boolean;
@@ -56,6 +57,7 @@ export function listWorktrees(cwd: string): WorktreeInfo[] {
     if (line.startsWith("worktree ")) {
       current = {
         path: line.slice("worktree ".length),
+        isMain: entries.length === 0,
         head: "",
         branch: null,
         detached: false,
@@ -75,6 +77,15 @@ export function listWorktrees(cwd: string): WorktreeInfo[] {
       current.locked = true;
     } else if (line.startsWith("prunable")) {
       current.prunable = true;
+    }
+  }
+  // Submodules can report their common Git directory as the main path.
+  // Probe and display the actual checkout, while retaining its main identity.
+  if (entries[0]) {
+    try {
+      entries[0].path = resolvePrimaryRepo(cwd);
+    } catch {
+      // Bare repositories and missing primaries can still have usable linked lanes.
     }
   }
   return entries;
