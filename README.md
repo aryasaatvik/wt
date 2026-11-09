@@ -48,6 +48,8 @@ wt rm x/my-feature        # remove worktree by branch (keeps branch)
 wt rm lane-1              # remove by directory name — how detached worktrees are addressed
 wt rm ../myrepo-worktrees/lane-1   # remove by path
 wt rm x/my-feature -D     # remove worktree and delete branch
+wt rm x/my-feature --dry-run   # run the checks, list what would go (incl. Xcode outputs)
+wt rm x/my-feature --keep-xcode
 wt                        # interactive picker (TTY only)
 wt help                   # usage (also -h/--help; never a branch name)
 wt ls                     # status table — always inline, stays in scrollback
@@ -156,6 +158,23 @@ An exact path given to `wt rm` may name a worktree of another repository; branch
 `wt reap` distinguishes landed commits from `PUSHED_ONLY` feature work. An open or unknown PR state vetoes every automatic removal; `PUSHED_ONLY` requires a confirmed merged PR. Otherwise only `REACHABLE`, `REACHABLE_BRANCH`, `EMPTY`, and `CONTENT_LANDED` (squash-merge detection) can auto-remove. When the lane's PR merged and its merge commit is fetched and on the default branch, `CONTENT_LANDED` compares against that commit's tree instead of the current default branch, so a squash-merged stacked lane still lands after main later edits a lower layer's files. A path that main has returned to its pre-merge content counts as reverted and keeps the lane.
 
 Ahead/behind counts compare a lane with its own `origin/<branch>` when that ref exists, then its upstream, then the origin default.
+
+### Xcode build outputs
+
+On macOS, removing a lane (`wt rm`, `wt reap --apply`, or the picker) also removes regenerable Xcode build output that belongs only to it, so it stops accumulating under `~/Library/Developer`:
+
+- an XcodeBuildMCP (or MobileBuildMCP) workspace in `~/Library/Developer/<name>/workspaces/`. Each is named `<slug>-<sha256(root)[:12]>` after the root the MCP ran in, and holds `DerivedData/<project>-<hash>/info.plist`, whose `WorkspacePath` is the project it built. A workspace is the lane's when its key is the lane's own (or a directory inside it) and everything it built is inside the lane. A workspace of an unidentified root qualifies only when it built something and every build is inside the lane. A shared workspace, such as the primary's, keeps everything except its build folders for lane projects. A same-named workspace with a different hash belongs to another directory and is never matched by name
+- Xcode's own build folders, `~/Library/Developer/Xcode/DerivedData/*`, whose `info.plist` `WorkspacePath` is inside the lane
+
+Removal never follows a symlink: a symlinked container, workspace, or build folder is skipped and reported, and recursive deletion unlinks symlinks without traversing them. An output with an open file (machine-wide `lsof`) or a running `xcodebuild`, `XCBBuildService`, or `swift-frontend` whose command line references the lane is kept and reported; so is everything when `lsof` or `ps` cannot be read. Outputs are rechecked for identity after the worktree is removed, and a kept output never fails the removal. Nothing happens on other platforms or when the directories are absent. Branches and source are untouched.
+
+`wt rm --dry-run` and the `wt reap` preview list each output with its size. Opt out per run with `--keep-xcode`, or always with:
+
+```toml
+# ~/.config/wt/config.toml
+[remove]
+xcode = false
+```
 
 ### Worktree layout
 

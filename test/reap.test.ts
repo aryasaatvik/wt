@@ -5,6 +5,7 @@ import { cmdLs } from "../src/ls.ts";
 import { removeWorktree, resolveTarget } from "../src/rm.ts";
 import { branchExists } from "../src/git.ts";
 import { applyReap, planReap, renderReapReport, type ReapEntry } from "../src/reap.ts";
+import { mcpWorkspaceKey, type XcodeEnv } from "../src/xcode.ts";
 import { makeRepo, type FixtureRepo } from "./harness.ts";
 
 function write(dir: string, rel: string, content: string) {
@@ -90,6 +91,53 @@ describe("wt reap", () => {
       expect(existsSync(lanes.drifted)).toBe(true);
       // reap never deletes branches
       expect(branchExists(repo.dir, "feat/stranded")).toBe(true);
+    } finally {
+      repo.rm();
+    }
+  }, 30000);
+
+  test("previews and removes a reaped lane's Xcode build outputs", async () => {
+    const repo = makeRepo();
+    try {
+      const lanes = await buildFixture(repo);
+      const pr = conclusiveNoPrScan(repo);
+      const library = join(repo.root, "Library", "Developer");
+      const xcode: XcodeEnv = {
+        platform: "darwin",
+        libraryRoot: library,
+        activity: async () => ({ openFiles: [], processes: [] }),
+      };
+      const plist = (dir: string, source: string) =>
+        write(
+          dir,
+          "info.plist",
+          `<plist version="1.0"><dict><key>WorkspacePath</key><string>${source}</string></dict></plist>`,
+        );
+      const reapable = join(
+        library,
+        "XcodeBuildMCP",
+        "workspaces",
+        mcpWorkspaceKey(lanes.reachable),
+      );
+      plist(join(reapable, "DerivedData", "App-1"), join(lanes.reachable, "App.xcodeproj"));
+      const kept = join(library, "Xcode", "DerivedData", "App-2");
+      plist(kept, join(lanes.stranded, "App.xcodeproj"));
+
+      const entries = await planReap({ all: false, cwd: repo.dir, scan: pr, xcode });
+      expect(dispositionOf(entries, "lane-reachable").xcode?.outputs.map((o) => o.path)).toEqual([
+        reapable,
+      ]);
+      expect(dispositionOf(entries, "feat-stranded").xcode).toBeUndefined();
+      const report = renderReapReport(entries, false);
+      expect(report).toContain(`would remove Xcode build outputs`);
+      expect(report).toContain(reapable);
+      expect(existsSync(reapable)).toBe(true);
+
+      const applied = await applyReap(entries, { env: pr.env, xcode });
+      expect(applied.removed.map((e) => e.record.slug)).toEqual(["lane-reachable"]);
+      expect(existsSync(reapable)).toBe(false);
+      expect(existsSync(kept)).toBe(true);
+      expect(renderReapReport(entries, true, applied)).toContain("Xcode build outputs freed");
     } finally {
       repo.rm();
     }

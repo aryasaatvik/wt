@@ -13,14 +13,48 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { listWorktrees, resolvePrimaryRepo, type WorktreeInfo } from "./git.ts";
 import { envDriftResolution, runSafetyPipeline, type SafetyFlag } from "./safety.ts";
+import { humanSize } from "./ls.ts";
 import { bold, dim, run, runAsync } from "./term.ts";
-import { detail, err, ExitError, info, log } from "./ui.ts";
+import { detail, err, ExitError, info, log, warn } from "./ui.ts";
+import {
+  outputLabel,
+  planXcodeOutputs,
+  removeXcodeOutputs,
+  resolveXcodeSetting,
+  totalKb,
+  worktreeRoots,
+  type XcodeOutput,
+  type XcodeSetting,
+  type XcodeSkip,
+} from "./xcode.ts";
 
 export interface RmOptions {
   deleteBranch: boolean;
   cwd: string;
   /** abort if the worktree HEAD no longer matches this sha (reap's TOCTOU guard) */
   expectHead?: string;
+  /** run every check and report what would be removed, removing nothing */
+  dryRun?: boolean;
+  /** false keeps Xcode build outputs; omitted reads `[remove] xcode` from config */
+  xcode?: XcodeSetting;
+}
+
+/** Indented lines listing Xcode outputs with sizes, then kept ones with reasons. */
+export function xcodeLines(
+  outputs: XcodeOutput[],
+  skipped: XcodeSkip[],
+  verb: { removed: string; kept: string },
+): string[] {
+  const lines: string[] = [];
+  if (outputs.length > 0) {
+    lines.push(`${verb.removed} Xcode build outputs (${humanSize(totalKb(outputs))}):`);
+    for (const output of outputs)
+      lines.push(
+        `  ${humanSize(output.kb).padStart(6)}  ${outputLabel(output).padEnd(15)}  ${output.path}`,
+      );
+  }
+  for (const skip of skipped) lines.push(`${verb.kept} ${skip.path}: ${skip.reason}`);
+  return lines;
 }
 
 /**
@@ -329,6 +363,30 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
     throw new ExitError(1);
   }
 
+  const xcode = resolveXcodeSetting(false, opts.xcode);
+  // Recorded paths may use either spelling; the realpath is gone after removal.
+  const roots = worktreeRoots(wt.path);
+
+  if (opts.dryRun) {
+    info(`Would remove worktree ${bold(target)} ${dim(wt.path)}`);
+    if (opts.deleteBranch && wt.branch) info(`Would delete branch ${bold(wt.branch)}`);
+    if (xcode === false) {
+      log(dim("Keeping Xcode build outputs (--keep-xcode or remove.xcode = false)"));
+      return;
+    }
+    const plan = await planXcodeOutputs(roots, xcode, { checkActivity: true });
+    if (plan.outputs.length + plan.skipped.length === 0)
+      log(dim("No Xcode build outputs for this worktree"));
+    const [header, ...outputs] = xcodeLines(plan.outputs, [], {
+      removed: "Would remove",
+      kept: "",
+    });
+    if (header) info(header);
+    for (const line of outputs) console.log(`    ${line}`);
+    for (const skip of plan.skipped) warn(`Would keep ${skip.path}: ${skip.reason}`);
+    return;
+  }
+
   info(`Removing worktree ${bold(target)}`);
   const removed = await removeWorktree(wt.path, repoRoot, submodules.paths);
   if (!removed.ok) {
@@ -338,6 +396,16 @@ export async function cmdRm(target: string, opts: RmOptions): Promise<void> {
   }
   log(`Removed ${dim(wt.path)}`);
   if (removed.retained) log(`Retained submodule Git data at ${dim(removed.retained)}`);
+
+  if (xcode !== false) {
+    // The worktree is already gone: a kept output is reported, never a failure.
+    const plan = await planXcodeOutputs(roots, xcode);
+    const result = await removeXcodeOutputs(plan, roots, xcode);
+    if (result.removed.length > 0)
+      log(`Removed Xcode build outputs (${humanSize(totalKb(result.removed))})`);
+    for (const output of result.removed) detail(dim(output.path));
+    for (const skip of result.skipped) warn(`Kept Xcode output ${skip.path}: ${skip.reason}`);
+  }
 
   if (opts.deleteBranch && wt.branch) {
     const deleted = await runAsync(["git", "-C", repoRoot, "branch", "-D", wt.branch]);
