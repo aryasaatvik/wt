@@ -388,9 +388,9 @@ export async function removeXcodeOutputs(
   if (plan.outputs.length === 0) return { removed, skipped };
   const activity = await (env.activity ?? probeActivity)();
   const libraryRoot = env.libraryRoot ?? join(homedir(), "Library", "Developer");
-  let current: Set<string>;
+  let current: Candidate[];
   try {
-    current = new Set(discover(roots, libraryRoot).candidates.map((c) => `${c.kind}\0${c.path}`));
+    current = discover(roots, libraryRoot).candidates;
   } catch (error) {
     const reason = `cannot recheck ownership: ${message(error)}`;
     return {
@@ -398,6 +398,15 @@ export async function removeXcodeOutputs(
       skipped: [...skipped, ...plan.outputs.map(({ path }) => ({ path, reason }))],
     };
   }
+  // A planned build folder stays the lane's when the whole workspace holding it
+  // has since become the lane's (say, a sibling lane's build was reaped first);
+  // only the planned folder is removed, never the newly qualifying workspace.
+  const stillOwned = (output: XcodeOutput) =>
+    current.some(
+      (c) =>
+        (c.kind === output.kind && c.path === output.path) ||
+        (output.kind === "derived-data" && c.kind === "workspace" && under(output.path, [c.path])),
+    );
   for (const output of plan.outputs) {
     try {
       const stat = lstatSync(output.path, { throwIfNoEntry: false });
@@ -406,7 +415,7 @@ export async function removeXcodeOutputs(
         !isCanonicalDir(output.path) ||
         stat.dev !== output.dev ||
         stat.ino !== output.ino ||
-        !current.has(`${output.kind}\0${output.path}`)
+        !stillOwned(output)
       ) {
         skipped.push({ path: output.path, reason: "changed since planning" });
         continue;

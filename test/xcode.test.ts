@@ -372,6 +372,29 @@ describe("removeXcodeOutputs ownership recheck", () => {
     }
   });
 
+  test("removes a planned build folder whose workspace has since become the lane's", async () => {
+    const f = fixture();
+    try {
+      const sibling = join(f.root, "repo-worktrees", "pip-sibling");
+      // Unknown root, one build per lane: each plan holds only its own folder.
+      const shared = mcpWorkspace(f.library, "tools-000000000000", [
+        join(f.lane, "App.xcodeproj"),
+        join(sibling, "App.xcodeproj"),
+      ]);
+      const plan = await planXcodeOutputs(f.lane, f.env);
+      expect(plan.outputs.map((o) => o.path)).toEqual([join(shared, "DerivedData", "App0-abc0")]);
+      // The sibling lane is reaped first, leaving only this lane's build.
+      rmSync(join(shared, "DerivedData", "App1-abc1"), { recursive: true });
+      const result = await removeXcodeOutputs(plan, [f.lane], f.env);
+      expect(result.removed.map((o) => o.path)).toEqual([join(shared, "DerivedData", "App0-abc0")]);
+      expect(result.skipped).toEqual([]);
+      // Only the planned folder goes; the workspace itself was never planned.
+      expect(existsSync(join(shared, "logs", "build.log"))).toBe(true);
+    } finally {
+      f.cleanup();
+    }
+  });
+
   test("reports an unreadable library instead of throwing", async () => {
     const f = fixture();
     const derived = join(f.library, "Xcode", "DerivedData");
