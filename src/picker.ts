@@ -275,7 +275,11 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     try {
       const result = await removeLane(r.slug, r.path, repoRoot);
       status = result.status;
-      if (result.removed) await refresh();
+      if (result.removed) {
+        await refresh();
+        // A clean rescan clears status; keep the removal report (kept outputs, retained data).
+        if (!status) status = result.status;
+      }
     } catch (e) {
       // busy must never stay stuck — that would silently freeze every key
       status = `error: ${e instanceof Error ? e.message : e}`;

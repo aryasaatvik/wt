@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { cmdRm } from "../src/rm.ts";
 import {
   mcpWorkspaceKey,
+  mentionsPath,
   planXcodeOutputs,
   readWorkspacePath,
   readXcodeEnabled,
@@ -199,6 +200,42 @@ describe("planXcodeOutputs", () => {
     }
   });
 
+  test("skips a library reached through a symlinked parent", async () => {
+    const f = fixture();
+    try {
+      const real = join(f.root, "Builds", "XcodeBuildMCP");
+      mkdirSync(join(real, "workspaces", mcpWorkspaceKey(f.lane)), { recursive: true });
+      mkdirSync(f.library, { recursive: true });
+      symlinkSync(real, join(f.library, "XcodeBuildMCP"));
+      const plan = await planXcodeOutputs(f.lane, f.env);
+      expect(plan.outputs).toEqual([]);
+      expect(plan.skipped).toEqual([
+        {
+          path: join(f.library, "XcodeBuildMCP", "workspaces"),
+          reason: "path passes through a symlink, not followed",
+        },
+      ]);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test("a build folder without a readable WorkspacePath keeps the workspace", async () => {
+    const f = fixture();
+    try {
+      const keyed = mcpWorkspace(f.library, mcpWorkspaceKey(f.lane), [
+        join(f.lane, "App.xcodeproj"),
+      ]);
+      mkdirSync(join(keyed, "DerivedData", "Unknown-ffff"));
+      const plan = await planXcodeOutputs(f.lane, f.env);
+      expect(plan.outputs.map((o) => [o.kind, o.path])).toEqual([
+        ["derived-data", join(keyed, "DerivedData", "App0-abc0")],
+      ]);
+    } finally {
+      f.cleanup();
+    }
+  });
+
   test("does nothing off macOS or without the directories", async () => {
     const f = fixture();
     try {
@@ -313,6 +350,54 @@ describe("removeXcodeOutputs", () => {
     } finally {
       f.cleanup();
     }
+  });
+});
+
+describe("removeXcodeOutputs ownership recheck", () => {
+  test("keeps a planned workspace that another checkout built into since", async () => {
+    const f = fixture();
+    try {
+      const keyed = mcpWorkspace(f.library, mcpWorkspaceKey(f.lane), [
+        join(f.lane, "App.xcodeproj"),
+      ]);
+      const plan = await planXcodeOutputs(f.lane, f.env);
+      expect(plan.outputs.map((o) => o.path)).toEqual([keyed]);
+      buildFolder(join(keyed, "DerivedData", "Other-1234"), join(f.root, "other", "O.xcodeproj"));
+      const result = await removeXcodeOutputs(plan, [f.lane], f.env);
+      expect(result.removed).toEqual([]);
+      expect(result.skipped).toEqual([{ path: keyed, reason: "changed since planning" }]);
+      expect(existsSync(keyed)).toBe(true);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test("reports an unreadable library instead of throwing", async () => {
+    const f = fixture();
+    const derived = join(f.library, "Xcode", "DerivedData");
+    try {
+      const own = xcodeDerived(f.library, "App-aaaa", join(f.lane, "App.xcodeproj"));
+      const plan = await planXcodeOutputs(f.lane, f.env);
+      chmodSync(derived, 0o000);
+      const result = await removeXcodeOutputs(plan, [f.lane], f.env);
+      expect(result.removed).toEqual([]);
+      expect(result.skipped.map((s) => s.path)).toEqual([own]);
+      expect(result.skipped[0]?.reason).toStartWith("cannot recheck ownership:");
+    } finally {
+      chmodSync(derived, 0o755);
+      f.cleanup();
+    }
+  });
+});
+
+describe("mentionsPath", () => {
+  test("matches whole path arguments, not a sibling prefix", () => {
+    const lane = "/x/repo-worktrees/pip-lane";
+    expect(mentionsPath(`xcodebuild -project ${lane}/App.xcodeproj`, lane)).toBe(true);
+    expect(mentionsPath(`xcodebuild -derivedDataPath=${lane}`, lane)).toBe(true);
+    expect(mentionsPath(`xcodebuild -project "${lane}/A B.xcodeproj"`, lane)).toBe(true);
+    expect(mentionsPath(`xcodebuild -project ${lane}-2/App.xcodeproj`, lane)).toBe(false);
+    expect(mentionsPath(`xcodebuild -project /y${lane}/App.xcodeproj`, lane)).toBe(false);
   });
 });
 

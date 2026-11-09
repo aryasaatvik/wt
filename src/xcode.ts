@@ -166,6 +166,14 @@ function childDirs(dir: string): string[] {
     .filter((path) => lstatSync(path, { throwIfNoEntry: false })?.isDirectory() ?? false);
 }
 
+/**
+ * A real directory reached without passing through any symlink. Throws when
+ * the path cannot be read, so an unreadable path is reported as such.
+ */
+function isCanonicalDir(path: string): boolean {
+  return lstatSync(path).isDirectory() && realpathSync.native(path) === path;
+}
+
 /** The root whose key names this workspace, found among its projects' ancestors. */
 function inferMcpRoot(key: string, workspacePaths: string[]): string | null {
   for (const path of workspacePaths) {
@@ -191,8 +199,14 @@ function discover(
   const skipped: XcodeSkip[] = [];
   const container = (path: string): boolean => {
     const stat = lstatSync(path, { throwIfNoEntry: false });
-    if (stat?.isSymbolicLink()) skipped.push({ path, reason: "symlink, not followed" });
-    return stat?.isDirectory() ?? false;
+    if (!stat || !(stat.isDirectory() || stat.isSymbolicLink())) return false;
+    // Any linked component, including a parent such as XcodeBuildMCP itself,
+    // would make deletion and open-file checks act on another real path.
+    if (!isCanonicalDir(path)) {
+      skipped.push({ path, reason: "path passes through a symlink, not followed" });
+      return false;
+    }
+    return true;
   };
 
   for (const name of MCP_DIRS) {
@@ -218,11 +232,12 @@ function discover(
       const sources = projects.flatMap((p) => (p.source ? [p.source] : []));
       const root = keys.has(entry) ? roots[0]! : inferMcpRoot(entry, sources);
       // The workspace is the lane's when its key is the lane's (or names a root
-      // inside the lane) and nothing it built lives elsewhere. A workspace of
-      // an unknown root qualifies only on evidence: every build is the lane's.
+      // inside the lane) and every build in it is provably the lane's: a build
+      // folder without a readable WorkspacePath could be anyone's. A workspace
+      // of an unknown root qualifies only on evidence of at least one build.
       const owned =
-        sources.every((source) => under(source, roots)) &&
-        (root ? under(root, roots) : sources.length > 0);
+        projects.every((project) => project.source !== null && under(project.source, roots)) &&
+        (root ? under(root, roots) : projects.length > 0);
       if (owned) {
         candidates.push({ kind: "workspace", path: workspace });
         continue;
@@ -276,6 +291,15 @@ export async function probeActivity(): Promise<Activity> {
   return { openFiles, processes };
 }
 
+/**
+ * Whether a command line names this path or something beneath it, as a whole
+ * argument: /x/pip-lane must not match /x/pip-lane-2.
+ */
+export function mentionsPath(command: string, path: string): boolean {
+  const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[\\s='"])${escaped}(?=$|[\\s/'":,;])`).test(command);
+}
+
 /** Why an output must be kept right now, or null when it is idle. */
 export function busyReason(path: string, roots: string[], activity: Activity): string | null {
   if (!activity.openFiles) return "cannot list open files (lsof unavailable)";
@@ -285,7 +309,7 @@ export function busyReason(path: string, roots: string[], activity: Activity): s
   const build = activity.processes.find(
     (proc) =>
       BUILD_PROCESS.test(proc.command) &&
-      [...roots, path].some((ref) => proc.command.includes(ref)),
+      [...roots, path].some((ref) => mentionsPath(proc.command, ref)),
   );
   if (build) {
     const name = BUILD_PROCESS.exec(build.command)![2];
@@ -318,7 +342,7 @@ export async function planXcodeOutputs(
     found = discover(roots, libraryRoot);
   } catch (error) {
     // Callers run this after the worktree is gone; a scan error is a report.
-    const reason = `cannot scan: ${error instanceof Error ? error.message : error}`;
+    const reason = `cannot scan: ${message(error)}`;
     return { outputs: [], skipped: [{ path: libraryRoot, reason }] };
   }
   const { candidates, skipped } = found;
@@ -326,22 +350,33 @@ export async function planXcodeOutputs(
   const activity = opts.checkActivity ? await (env.activity ?? probeActivity)() : null;
   const outputs: XcodeOutput[] = [];
   await pool(candidates, 4, async (candidate) => {
-    const stat = lstatSync(candidate.path, { throwIfNoEntry: false });
-    if (!stat?.isDirectory()) return;
-    const busy = activity ? busyReason(candidate.path, roots, activity) : null;
-    if (busy) {
-      skipped.push({ path: candidate.path, reason: busy });
-      return;
+    try {
+      const stat = lstatSync(candidate.path, { throwIfNoEntry: false });
+      if (!stat?.isDirectory()) return;
+      const busy = activity ? busyReason(candidate.path, roots, activity) : null;
+      if (busy) {
+        skipped.push({ path: candidate.path, reason: busy });
+        return;
+      }
+      const kb = await sizeKb(candidate.path);
+      outputs.push({ ...candidate, kb, dev: stat.dev, ino: stat.ino });
+    } catch (error) {
+      skipped.push({ path: candidate.path, reason: `cannot inspect: ${message(error)}` });
     }
-    outputs.push({ ...candidate, kb: await sizeKb(candidate.path), dev: stat.dev, ino: stat.ino });
   });
   outputs.sort((a, b) => a.path.localeCompare(b.path));
   return { outputs, skipped };
 }
 
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
- * Remove planned outputs that are still the same directories and idle. A
- * skipped output is reported, never retried or forced.
+ * Remove planned outputs that are still the lane's, the same directories, and
+ * idle. Ownership is rediscovered just before deletion: another lane may have
+ * built into a planned workspace since. A skipped output is reported, never
+ * retried or forced, and nothing here throws.
  */
 export async function removeXcodeOutputs(
   plan: XcodePlan,
@@ -352,27 +387,40 @@ export async function removeXcodeOutputs(
   const skipped = [...plan.skipped];
   if (plan.outputs.length === 0) return { removed, skipped };
   const activity = await (env.activity ?? probeActivity)();
+  const libraryRoot = env.libraryRoot ?? join(homedir(), "Library", "Developer");
+  let current: Set<string>;
+  try {
+    current = new Set(discover(roots, libraryRoot).candidates.map((c) => `${c.kind}\0${c.path}`));
+  } catch (error) {
+    const reason = `cannot recheck ownership: ${message(error)}`;
+    return {
+      removed,
+      skipped: [...skipped, ...plan.outputs.map(({ path }) => ({ path, reason }))],
+    };
+  }
   for (const output of plan.outputs) {
-    const stat = lstatSync(output.path, { throwIfNoEntry: false });
-    if (!stat) continue;
-    if (!stat.isDirectory() || stat.dev !== output.dev || stat.ino !== output.ino) {
-      skipped.push({ path: output.path, reason: "changed since planning" });
-      continue;
-    }
-    const busy = busyReason(output.path, roots, activity);
-    if (busy) {
-      skipped.push({ path: output.path, reason: busy });
-      continue;
-    }
     try {
+      const stat = lstatSync(output.path, { throwIfNoEntry: false });
+      if (!stat) continue;
+      if (
+        !isCanonicalDir(output.path) ||
+        stat.dev !== output.dev ||
+        stat.ino !== output.ino ||
+        !current.has(`${output.kind}\0${output.path}`)
+      ) {
+        skipped.push({ path: output.path, reason: "changed since planning" });
+        continue;
+      }
+      const busy = busyReason(output.path, roots, activity);
+      if (busy) {
+        skipped.push({ path: output.path, reason: busy });
+        continue;
+      }
       // Recursive rm unlinks symlinks inside the tree without following them.
       rmSync(output.path, { recursive: true });
       removed.push(output);
     } catch (error) {
-      skipped.push({
-        path: output.path,
-        reason: `cannot remove: ${error instanceof Error ? error.message : error}`,
-      });
+      skipped.push({ path: output.path, reason: `cannot remove: ${message(error)}` });
     }
   }
   return { removed, skipped };
