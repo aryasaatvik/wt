@@ -9,7 +9,7 @@
 import { basename, dirname, join } from "node:path";
 import { discoverPrimaries, humanSize } from "./ls.ts";
 import { resolvePrimaryRepo } from "./git.ts";
-import { inspectSubmodules, removeWorktree } from "./rm.ts";
+import { inspectSubmodules, removeWorktree, xcodeLines } from "./rm.ts";
 import { runSafetyPipeline, type SafetyResult } from "./safety.ts";
 import {
   fetchPrs,
@@ -23,6 +23,19 @@ import {
 import { bold, dim, gray, green, pool, red, runAsync, yellow } from "./term.ts";
 import { err, ExitError } from "./ui.ts";
 import { classifyWorktree, isRemovable, verdictLabel, type Verdict } from "./verdict.ts";
+import {
+  memoizeActivity,
+  planXcodeOutputs,
+  probeActivity,
+  removeXcodeOutputs,
+  resolveXcodeSetting,
+  totalKb,
+  worktreeRoots,
+  type XcodeEnv,
+  type XcodePlan,
+  type XcodeRemoval,
+  type XcodeSetting,
+} from "./xcode.ts";
 
 export type Disposition = "remove" | "skip" | "keep";
 
@@ -34,6 +47,10 @@ export interface ReapEntry {
   disposition: Disposition;
   reasons: string[];
   safety: SafetyResult | null;
+  /** the lane's Xcode build outputs, planned for removable lanes unless opted out */
+  xcode?: XcodePlan;
+  /** what removal did with them, after --apply */
+  xcodeRemoval?: XcodeRemoval;
 }
 
 export interface ReapOptions {
@@ -42,9 +59,16 @@ export interface ReapOptions {
   cwd: string;
   devRoot?: string;
   scan?: ScanOptions;
+  keepXcode?: boolean;
+  /** false keeps Xcode build outputs; omitted reads `[remove] xcode` from config */
+  xcode?: XcodeSetting;
 }
 
-async function planRepo(repoRoot: string, opts: ReapOptions): Promise<ReapEntry[]> {
+async function planRepo(
+  repoRoot: string,
+  opts: ReapOptions,
+  xcode: XcodeSetting,
+): Promise<ReapEntry[]> {
   const records = await scanWorktrees(repoRoot, opts.scan);
   const cutoffMs = opts.olderThanDays ? Date.now() - opts.olderThanDays * 86400_000 : null;
 
@@ -129,9 +153,19 @@ async function planRepo(repoRoot: string, opts: ReapOptions): Promise<ReapEntry[
         disposition: "remove",
         reasons: [verdictText],
         safety,
+        ...(xcode === false
+          ? {}
+          : { xcode: await planXcodeOutputs(record.path, xcode, { checkActivity: true }) }),
       };
     },
   );
+}
+
+/** One open-file probe serves the whole preview; removal probes afresh. */
+function planXcodeSetting(opts: ReapOptions): XcodeSetting {
+  const setting = resolveXcodeSetting(opts.keepXcode ?? false, opts.xcode);
+  if (setting === false) return false;
+  return { ...setting, activity: memoizeActivity(setting.activity ?? probeActivity) };
 }
 
 export async function planReap(opts: ReapOptions): Promise<ReapEntry[]> {
@@ -143,13 +177,14 @@ export async function planReap(opts: ReapOptions): Promise<ReapEntry[]> {
       err("not inside a git repository (use wt reap --all to sweep ~/Developer)");
       throw new ExitError(1);
     }
-    return planRepo(repoRoot, opts);
+    return planRepo(repoRoot, opts, planXcodeSetting(opts));
   }
   const devRoot = opts.devRoot ?? join(process.env.HOME ?? "~", "Developer");
   const primaries = discoverPrimaries(devRoot);
+  const xcode = planXcodeSetting(opts);
   const perRepo = await pool(primaries, 4, async (primary) => {
     try {
-      return await planRepo(primary, opts);
+      return await planRepo(primary, opts, xcode);
     } catch {
       return [];
     }
@@ -164,6 +199,8 @@ export interface ApplyResult {
 
 export interface ApplyOptions {
   env?: Record<string, string | undefined>;
+  /** where and how to remove planned Xcode outputs; defaults to the real machine */
+  xcode?: XcodeEnv;
 }
 
 export async function applyReap(
@@ -245,11 +282,14 @@ export async function applyReap(
       });
       continue;
     }
+    // Recorded paths may use either spelling; the realpath is gone after removal.
+    const roots = worktreeRoots(record.path);
     const rm = await removeWorktree(record.path, repoRoot, submodules.paths);
     if (!rm.ok) {
       skipped.push({ entry, reason: rm.reason });
       continue;
     }
+    if (entry.xcode) entry.xcodeRemoval = await removeXcodeOutputs(entry.xcode, roots, opts.xcode);
     entry.safety = safety;
     removed.push(entry);
   }
@@ -302,24 +342,44 @@ export function renderReapReport(
         lines.push(
           `  ${color[disposition](label[disposition].padEnd(labelWidth))}  ${e.record.slug.padEnd(30)} ${size.padStart(6)}  ${dim(e.reasons.join("; "))}`,
         );
+        if (disposition !== "remove") continue;
+        const xcode = applied
+          ? e.xcodeRemoval &&
+            xcodeLines(e.xcodeRemoval.removed, e.xcodeRemoval.skipped, {
+              removed: "removed",
+              kept: "kept",
+            })
+          : e.xcode &&
+            xcodeLines(e.xcode.outputs, e.xcode.skipped, {
+              removed: "would remove",
+              kept: "would keep",
+            });
+        for (const line of xcode ?? []) lines.push(`  ${" ".repeat(labelWidth)}  ${dim(line)}`);
       }
     }
     lines.push("");
   }
   const removable = entries.filter((e) => e.disposition === "remove");
-  const totalKb = removable.reduce((s, e) => s + (e.record.sizeKb ?? 0), 0);
+  const laneKb = removable.reduce((s, e) => s + (e.record.sizeKb ?? 0), 0);
+  const xcodeKb = removable.reduce((s, e) => s + totalKb(e.xcode?.outputs ?? []), 0);
   const skips = entries.filter((e) => e.disposition === "skip").length;
   if (applied) {
     const freedKb = applied.removed.reduce((s, e) => s + (e.record.sizeKb ?? 0), 0);
+    const xcodeFreedKb = applied.removed.reduce(
+      (s, e) => s + totalKb(e.xcodeRemoval?.removed ?? []),
+      0,
+    );
+    const xcodeNote = xcodeFreedKb > 0 ? ` + ${humanSize(xcodeFreedKb)} Xcode build outputs` : "";
     lines.push(
-      `${bold(String(applied.removed.length))} removed (${humanSize(freedKb)} freed), ${applied.skipped.length} skipped at apply time, ${skips} skipped at plan time`,
+      `${bold(String(applied.removed.length))} removed (${humanSize(freedKb)}${xcodeNote} freed), ${applied.skipped.length} skipped at apply time, ${skips} skipped at plan time`,
     );
     for (const s of applied.skipped) {
       lines.push(`  ${red("skipped")} ${s.entry.record.slug}: ${s.reason}`);
     }
   } else {
+    const xcodeNote = xcodeKb > 0 ? ` + ${humanSize(xcodeKb)} Xcode build outputs` : "";
     lines.push(
-      `${bold(String(removable.length))} reapable (${humanSize(totalKb)}), ${skips} skipped, ${entries.filter((e) => e.disposition === "keep").length} kept — run with --apply to remove`,
+      `${bold(String(removable.length))} reapable (${humanSize(laneKb)}${xcodeNote}), ${skips} skipped, ${entries.filter((e) => e.disposition === "keep").length} kept — run with --apply to remove`,
     );
   }
   if (

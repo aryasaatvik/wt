@@ -15,6 +15,7 @@ import {
   branchLabel,
   dirtyLabel,
   humanAge,
+  humanSize,
   prLabel,
   sizeLabel,
   withVerdicts,
@@ -24,6 +25,14 @@ import { scanWorktrees, type SizeMode } from "./scan.ts";
 import { inspectSubmodules, removeWorktree } from "./rm.ts";
 import { runSafetyPipeline } from "./safety.ts";
 import { pad } from "./term.ts";
+import {
+  planXcodeOutputs,
+  removeXcodeOutputs,
+  resolveXcodeSetting,
+  totalKb,
+  worktreeRoots,
+  type XcodeSetting,
+} from "./xcode.ts";
 
 interface PickerOptions {
   cwd: string;
@@ -39,6 +48,7 @@ export async function removeLane(
   slug: string,
   path: string,
   repoRoot: string,
+  xcodeSetting?: XcodeSetting,
 ): Promise<{ removed: boolean; status: string }> {
   const submodules = await inspectSubmodules(path);
   if (!submodules.ok) return { removed: false, status: `skipped ${slug}: ${submodules.reason}` };
@@ -48,6 +58,8 @@ export async function removeLane(
     const more = safety.flags.length > 1 ? ` (+${safety.flags.length - 1} more)` : "";
     return { removed: false, status: `skipped ${slug}: [${first.kind}] ${first.detail}${more}` };
   }
+  const xcode = resolveXcodeSetting(false, xcodeSetting);
+  const roots = worktreeRoots(path);
   const rm = await removeWorktree(path, repoRoot, submodules.paths);
   if (!rm.ok)
     return {
@@ -55,7 +67,15 @@ export async function removeLane(
       status: `failed: ${rm.reason.split("\n")[0] || "git worktree remove error"}`,
     };
   const retained = rm.retained ? ` · submodule Git data retained at ${rm.retained}` : "";
-  return { removed: true, status: `removed ${slug}${retained}` };
+  let xcodeNote = "";
+  if (xcode !== false) {
+    const result = await removeXcodeOutputs(await planXcodeOutputs(roots, xcode), roots, xcode);
+    if (result.removed.length > 0)
+      xcodeNote += ` · Xcode build outputs ${humanSize(totalKb(result.removed))} freed`;
+    if (result.skipped.length > 0)
+      xcodeNote += ` · kept ${result.skipped.length} Xcode output(s) in use`;
+  }
+  return { removed: true, status: `removed ${slug}${retained}${xcodeNote}` };
 }
 
 export async function runPicker(opts: PickerOptions): Promise<void> {
@@ -255,7 +275,11 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     try {
       const result = await removeLane(r.slug, r.path, repoRoot);
       status = result.status;
-      if (result.removed) await refresh();
+      if (result.removed) {
+        await refresh();
+        // A clean rescan clears status; keep the removal report (kept outputs, retained data).
+        if (!status) status = result.status;
+      }
     } catch (e) {
       // busy must never stay stuck — that would silently freeze every key
       status = `error: ${e instanceof Error ? e.message : e}`;

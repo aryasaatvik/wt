@@ -85,6 +85,7 @@ wt rm x/my-feature                 # by branch name
 wt rm lane-1                       # by worktree dir name (how detached worktrees are addressed)
 wt rm ../myrepo-worktrees/lane-1   # by path
 wt rm x/my-feature -D              # explicitly also delete the local branch
+wt rm x/my-feature --dry-run       # run every check, list what would go, remove nothing
 ```
 
 Runs `git worktree remove` and preserves the local branch. Pass `-D` or `--delete-branch` only when
@@ -93,8 +94,14 @@ branch deletion is explicitly requested.
 The target resolves in order: exact branch name → worktree directory name under `<repo>-worktrees/`
 → filesystem path. An exact path may name a worktree of another repository; branch and directory names
 resolve only in the current repository. `wt rm` refuses a target that contains the caller's current
-directory — run it from the primary checkout or another worktree. `wt rm` has no dry-run mode, so inspect the lane with `wt ls -v` or the safe set
-with `wt reap` before removal.
+directory — run it from the primary checkout or another worktree. `wt rm --dry-run` runs the same
+checks and lists what would be removed, including Xcode build outputs and their sizes.
+
+On macOS, `wt rm`, `wt reap --apply`, and the picker also remove the lane's Xcode build outputs:
+its XcodeBuildMCP/MobileBuildMCP workspace and Xcode DerivedData folders whose `info.plist`
+`WorkspacePath` lies inside the lane. Symlinks are never followed; an output with an open file or a
+running `xcodebuild`/`XCBBuildService`/`swift-frontend` that references the lane is kept and reported.
+Pass `--keep-xcode`, or set `[remove] xcode = false` in `~/.config/wt/config.toml`, to keep them.
 
 Every removal runs the same fail-closed safety pipeline. It refuses dirty or status-unreadable
 worktrees and local env files that drifted from the primary (reporting key names, never values).

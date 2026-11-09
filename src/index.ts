@@ -33,7 +33,11 @@ ${bold("Commands:")}
                        <target> is a branch name, worktree dir name, or path —
                        detached worktrees are addressed by dir name or path
                        -D, --delete-branch  Also delete the branch
+                       --dry-run     run the checks, list what would go
+                       --keep-xcode  keep the lane's Xcode build outputs
                        Refuses dirty worktrees; wt never uses --force
+                       On macOS also removes the lane's Xcode build outputs
+                       (XcodeBuildMCP workspaces, Xcode DerivedData)
   wt ls|list [flags]    Status table: branch, dirty, ahead/behind, PR, size, age
                        Sizes come from a 24h per-worktree cache (~ marks
                        a cached value); du only runs on cache misses
@@ -50,6 +54,7 @@ ${bold("Commands:")}
                        CONTENT_LANDED; open/unknown PR state always vetoes
                        PUSHED_ONLY requires a confirmed merged PR
                        --apply             remove them (branches are kept)
+                       --keep-xcode        keep lanes' Xcode build outputs
                        --all               sweep every repo under ~/Developer
                        --older-than <days> only lanes with older last commits
 
@@ -165,12 +170,14 @@ if (command === "ls" || command === "list") {
 if (command === "reap") {
   let apply = false;
   let all = false;
+  let keepXcode = false;
   let olderThanDays: number | undefined;
   const rest = args.slice(1);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]!;
     if (a === "--apply") apply = true;
     else if (a === "--all") all = true;
+    else if (a === "--keep-xcode") keepXcode = true;
     else if (a === "--older-than") {
       olderThanDays = Number(rest[++i]);
       if (!Number.isFinite(olderThanDays) || olderThanDays < 0) {
@@ -185,7 +192,7 @@ if (command === "reap") {
   const { applyReap, planReap, renderReapReport } = await import("./reap.ts");
   const spin = spinner(all ? "Planning reap across ~/Developer" : "Planning reap");
   try {
-    const entries = await planReap({ all, olderThanDays, cwd });
+    const entries = await planReap({ all, olderThanDays, cwd, keepXcode });
     spin.stop();
     if (entries.length === 0) {
       console.log("no worktrees to consider");
@@ -319,8 +326,12 @@ if (command === "rm" || command === "remove") {
     process.exit(1);
   }
   let deleteBranch = false;
+  let dryRun = false;
+  let keepXcode = false;
   for (const a of rest.slice(1)) {
     if (a === "-D" || a === "--delete-branch") deleteBranch = true;
+    else if (a === "--dry-run") dryRun = true;
+    else if (a === "--keep-xcode") keepXcode = true;
     else {
       console.error(
         `unknown flag for wt rm: ${a} (wt never passes flags through to git worktree remove)`,
@@ -329,7 +340,7 @@ if (command === "rm" || command === "remove") {
     }
   }
   try {
-    await cmdRm(target, { deleteBranch, cwd });
+    await cmdRm(target, { deleteBranch, cwd, dryRun, xcode: keepXcode ? false : undefined });
   } catch (e) {
     exitFrom(e);
   }

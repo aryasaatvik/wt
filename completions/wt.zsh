@@ -34,6 +34,8 @@ _wt() {
         rm|remove)
           _arguments \
             '(-D --delete-branch)'{-D,--delete-branch}'[Also delete the branch]' \
+            '--dry-run[Run the checks and list what would be removed]' \
+            '--keep-xcode[Keep the lane'"'"'s Xcode build outputs]' \
             '*:worktree:_wt_worktree_targets'
           return
           ;;
@@ -71,6 +73,7 @@ _wt() {
           _arguments \
             '--apply[Remove them (branches are kept)]' \
             '--all[Sweep every repo under ~/Developer]' \
+            '--keep-xcode[Keep lanes'"'"' Xcode build outputs]' \
             '--older-than[Only lanes with older last commits]:days:'
           return
           ;;
