@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { cmdRm } from "../src/rm.ts";
 import {
   mcpWorkspaceKey,
@@ -26,6 +27,46 @@ import {
 import { makeRepo } from "./harness.ts";
 
 const idle = async (): Promise<Activity> => ({ openFiles: [], processes: [] });
+
+const repoRoot = join(import.meta.dir, "..");
+
+/**
+ * Run probeActivity in a subprocess whose PATH holds only these fake tools, so
+ * the real lsof/ps and the test process's PATH are never involved.
+ */
+async function probeWith(tools: { lsof: string; ps: string }): Promise<Activity> {
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "wt-probe-")));
+  try {
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    for (const [name, body] of Object.entries(tools)) {
+      const path = join(bin, name);
+      writeFileSync(path, `#!/bin/sh\n${body}\n`);
+      chmodSync(path, 0o755);
+    }
+    const script = join(root, "probe.ts");
+    writeFileSync(
+      script,
+      `const { probeActivity } = await import(${JSON.stringify(
+        pathToFileURL(join(repoRoot, "src", "xcode.ts")).href,
+      )});\nprocess.stdout.write(JSON.stringify(await probeActivity()));\n`,
+    );
+    const proc = Bun.spawn([process.execPath, script], {
+      env: { PATH: bin },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, code] = await Promise.all([
+      Bun.readableStreamToText(proc.stdout),
+      Bun.readableStreamToText(proc.stderr),
+      proc.exited,
+    ]);
+    if (code !== 0) throw new Error(`probe subprocess exited ${code}: ${stderr}`);
+    return JSON.parse(stdout) as Activity;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
 
 function escapeXml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -421,6 +462,49 @@ describe("mentionsPath", () => {
     expect(mentionsPath(`xcodebuild -project "${lane}/A B.xcodeproj"`, lane)).toBe(true);
     expect(mentionsPath(`xcodebuild -project ${lane}-2/App.xcodeproj`, lane)).toBe(false);
     expect(mentionsPath(`xcodebuild -project /y${lane}/App.xcodeproj`, lane)).toBe(false);
+  });
+});
+
+describe("probeActivity", () => {
+  test("keeps every output when lsof returns an empty listing", async () => {
+    const activity = await probeWith({ lsof: "exit 0", ps: "exit 0" });
+    expect(activity.openFiles).toBeNull();
+  });
+
+  test("parses a successful lsof listing and ps output", async () => {
+    const activity = await probeWith({
+      lsof: "printf 'p7\\nn/tmp/a.log\\np8\\nn/tmp/b.log\\n'",
+      ps: "printf '  9 /usr/bin/xcodebuild -project /x/App.xcodeproj\\n'",
+    });
+    expect(activity.openFiles).toEqual([
+      { pid: 7, path: "/tmp/a.log" },
+      { pid: 8, path: "/tmp/b.log" },
+    ]);
+    expect(activity.processes).toEqual([
+      { pid: 9, command: "/usr/bin/xcodebuild -project /x/App.xcodeproj" },
+    ]);
+  });
+
+  test("keeps every output when lsof fails after a partial listing", async () => {
+    const activity = await probeWith({
+      lsof: "printf 'p123\\nn/tmp/build.log\\n'\nexit 1",
+      ps: "printf '  42 /usr/bin/xcodebuild -project /x/App.xcodeproj\\n'",
+    });
+    // A nonzero lsof exit means processes it could not read are missing, so
+    // the partial listing cannot prove an output idle.
+    expect(activity.openFiles).toBeNull();
+    expect(activity.processes).toEqual([
+      { pid: 42, command: "/usr/bin/xcodebuild -project /x/App.xcodeproj" },
+    ]);
+  });
+
+  test("keeps every output when ps fails after a partial listing", async () => {
+    const activity = await probeWith({
+      lsof: "printf 'p7\\nn/tmp/a.log\\n'",
+      ps: "printf '  9 /usr/bin/xcodebuild -project /x/App.xcodeproj\\n'\nexit 1",
+    });
+    expect(activity.openFiles).toEqual([{ pid: 7, path: "/tmp/a.log" }]);
+    expect(activity.processes).toBeNull();
   });
 });
 

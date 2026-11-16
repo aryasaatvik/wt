@@ -272,8 +272,9 @@ export async function probeActivity(): Promise<Activity> {
     runAsync(["ps", "-axww", "-o", "pid=,args="]),
   ]);
   let openFiles: OpenFile[] | null = null;
-  // lsof exits 1 when some process could not be read; a listing is still a listing.
-  if (lsof.stdout.trim()) {
+  // A nonzero lsof exit means the listing may be partial: processes it could
+  // not read are missing, so a partial read cannot prove an output idle.
+  if (lsof.ok && lsof.stdout.trim()) {
     openFiles = [];
     let pid = 0;
     for (const line of lsof.stdout.split("\n")) {
