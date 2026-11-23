@@ -10,6 +10,115 @@ const OPTS = { verbose: false, install: false, extraFlags: [] };
 
 describe("cmdNew", () => {
   test.if(process.platform === "darwin")(
+    "clones with an empty effective hooks directory and worktree config enabled",
+    async () => {
+      const repo = makeRepo();
+      try {
+        repo.git("config", "core.hooksPath", join(repo.dir, ".git", "hooks"));
+        repo.git("config", "extensions.worktreeConfig", "true");
+        repo.git("config", "hook.disabled-fixture.event", "post-checkout");
+        repo.git("config", "hook.disabled-fixture.command", "exit 1");
+        repo.git("config", "hook.disabled-fixture.enabled", "false");
+        expect(existsSync(join(repo.dir, ".git", "config.worktree"))).toBe(false);
+        const lane = await cmdNew("feat/no-hook", "main", { ...OPTS, cwd: repo.dir });
+        expect(readProvenance(lane)?.checkout).toEqual({ mode: "clone", cloned: 1, rewritten: 0 });
+        expect(repo.gitIn(lane, "status", "--porcelain")).toBe("");
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(process.platform === "darwin")(
+    "lets Git discover and run its post-checkout hook once",
+    async () => {
+      const repo = makeRepo();
+      try {
+        const hooks = join(repo.dir, ".git", "custom-hooks");
+        mkdirSync(hooks);
+        const hook = join(hooks, "post-checkout");
+        await Bun.write(hook, '#!/bin/sh\nprintf "%s\\n" "$PWD" "$@" >> hook-call.txt\n');
+        chmodSync(hook, 0o755);
+        repo.git("config", "core.hooksPath", ".git/custom-hooks");
+        const head = repo.git("rev-parse", "HEAD").trim();
+        const lane = await cmdNew("feat/hook", "main", { ...OPTS, cwd: repo.dir });
+        expect(readProvenance(lane)?.checkout).toEqual({
+          mode: "git",
+          cloned: 0,
+          rewritten: 0,
+          reason: "Git post-checkout hook",
+        });
+        expect(await Bun.file(join(lane, "hook-call.txt")).text()).toBe(
+          `${lane}\n${"0".repeat(head.length)}\n${head}\n1\n`,
+        );
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(process.platform === "darwin")(
+    "checks conditional config against the new lane's Git directory",
+    async () => {
+      const repo = makeRepo();
+      try {
+        const config = join(repo.root, "checkout.gitconfig");
+        await Bun.write(config, "[core]\n  autocrlf = true\n");
+        repo.git("config", "includeIf.gitdir:**/worktrees/*-converted.path", config);
+        const converted = await cmdNew("feat/converted", "main", { ...OPTS, cwd: repo.dir });
+        const head = repo.git("rev-parse", "HEAD").trim();
+        const plain = repo.addWorktree("plain-converted", { detachAt: head });
+        expect(readProvenance(converted)?.checkout).toEqual({
+          mode: "git",
+          cloned: 0,
+          rewritten: 0,
+          reason: "core.autocrlf conversion",
+        });
+        expect(await Bun.file(join(converted, "README.md")).text()).toBe("fixture\r\n");
+        expect(await Bun.file(join(plain, "README.md")).text()).toBe("fixture\r\n");
+        expect(repo.gitIn(converted, "ls-files", "-s")).toBe(repo.gitIn(plain, "ls-files", "-s"));
+
+        const unaffected = await cmdNew("feat/eligible", "main", { ...OPTS, cwd: repo.dir });
+        expect(readProvenance(unaffected)?.checkout).toEqual({
+          mode: "clone",
+          cloned: 1,
+          rewritten: 0,
+        });
+        expect(await Bun.file(join(unaffected, "README.md")).text()).toBe("fixture\n");
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(process.platform === "darwin")(
+    "preserves sparse patterns inherited from the primary",
+    async () => {
+      const repo = makeRepo();
+      try {
+        repo.write("keep/file", "included\n");
+        repo.write("omit/file", "excluded\n");
+        const head = repo.commit("add directories");
+        repo.git("sparse-checkout", "set", "keep");
+        const lane = await cmdNew("feat/sparse", "main", { ...OPTS, cwd: repo.dir });
+        const plain = repo.addWorktree("plain-sparse", { detachAt: head });
+        expect(readProvenance(lane)?.checkout).toEqual({
+          mode: "git",
+          cloned: 0,
+          rewritten: 0,
+          reason: "sparse checkout",
+        });
+        expect(repo.gitIn(lane, "ls-files", "-v")).toBe(repo.gitIn(plain, "ls-files", "-v"));
+        expect(existsSync(join(lane, "keep", "file"))).toBe(true);
+        expect(existsSync(join(lane, "omit", "file"))).toBe(false);
+        expect(repo.gitIn(lane, "status", "--porcelain")).toBe("");
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(process.platform === "darwin")(
     "clones files and lets Git fill paths blocked by a primary file or symlink",
     async () => {
       const repo = makeRepo();

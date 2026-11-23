@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, lstatSync, readFileSync, readlinkSync, symlinkSync, utimesSync } from "node:fs";
 import { join } from "node:path";
-import { type CheckoutRecord, checkoutClone, planClone } from "../src/clone.ts";
+import {
+  type CheckoutRecord,
+  checkoutClone,
+  cloneCheckoutReason,
+  planClone,
+} from "../src/clone.ts";
 import { readProvenance } from "../src/create.ts";
 import { makeRepo } from "./harness.ts";
 
@@ -24,9 +29,11 @@ describe("clone checkout eligibility", () => {
       repo.write(".gitattributes", "*.md eol=crlf\n");
       const head = repo.commit("add attributes");
       repo.git("checkout", "main");
-      expect(await planClone(repo.dir, head, [], "darwin")).toEqual({
-        reason: "Git checkout attribute: eol",
-      });
+      const plan = await planClone(repo.dir, head, [], "darwin");
+      if ("reason" in plan) throw new Error(plan.reason);
+      expect(await cloneCheckoutReason(repo.dir, head, plan.files)).toBe(
+        "Git checkout attribute: eol",
+      );
     } finally {
       repo.rm();
     }
@@ -46,16 +53,17 @@ describe("clone checkout eligibility", () => {
     }
   });
 
-  test("preserves sparse checkout, implicit CRLF conversion, and custom hooks", async () => {
+  test("checks effective sparse checkout and implicit CRLF conversion", async () => {
     const repo = makeRepo();
     try {
+      const plan = await planClone(repo.dir, "HEAD", [], "darwin");
+      if ("reason" in plan) throw new Error(plan.reason);
       for (const [key, value, reason] of [
         ["core.sparseCheckout", "true", "sparse checkout"],
         ["core.autocrlf", "input", "core.autocrlf conversion"],
-        ["core.hooksPath", ".hooks", "Git post-checkout hook may run"],
       ]) {
         repo.git("config", key!, value!);
-        expect(await planClone(repo.dir, "HEAD", [], "darwin")).toEqual({ reason });
+        expect(await cloneCheckoutReason(repo.dir, "HEAD", plan.files)).toBe(reason);
         repo.git("config", "--unset", key!);
       }
     } finally {

@@ -3,7 +3,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { type CheckoutRecord, type ClonePlan, checkoutClone, planClone } from "./clone.ts";
+import {
+  type CheckoutRecord,
+  type ClonePlan,
+  checkoutClone,
+  checkoutWithGit,
+  cloneCheckoutReason,
+  planClone,
+} from "./clone.ts";
 import {
   type CreateSource,
   listWorktrees,
@@ -324,15 +331,23 @@ export async function cmdNew(
   writeProvenance(wtDir, marker);
 
   if ("files" in checkoutPlan) {
-    const checkoutSpin = spinner("Cloning and verifying tracked files");
+    const checkoutSpin = spinner("Checking out tracked files");
     try {
-      await checkoutClone(repoRoot, wtDir, source.head, checkoutPlan.files, checkout);
+      const reason = await cloneCheckoutReason(wtDir, source.head, checkoutPlan.files);
+      if (reason) {
+        checkout.mode = "git";
+        checkout.reason = reason;
+        await checkoutWithGit(wtDir);
+      } else {
+        checkoutSpin.update("Cloning and verifying tracked files");
+        await checkoutClone(repoRoot, wtDir, source.head, checkoutPlan.files, checkout);
+      }
     } catch (e) {
       checkoutSpin.stop();
       marker.phase = "incomplete";
       marker.failure = e instanceof Error ? e.message : String(e);
       writeProvenance(wtDir, marker);
-      err("Failed to verify the tracked checkout");
+      err("Failed to check out tracked files");
       detail(`${marker.failure}\nWorktree kept at ${wtDir}`);
       throw new ExitError(1);
     }

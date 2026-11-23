@@ -1,5 +1,5 @@
 import { dlopen, read } from "bun:ffi";
-import { closeSync, existsSync, fstatSync, realpathSync } from "node:fs";
+import { accessSync, closeSync, constants as fsConstants, fstatSync, realpathSync } from "node:fs";
 import { constants } from "node:os";
 import { basename, dirname } from "node:path";
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
@@ -51,48 +51,56 @@ export async function planClone(
   )
     return { reason: "Git environment overrides the checkout" };
 
-  const [config, hooks, tree] = await Promise.all([
-    git(primary, [
-      "config",
-      "--null",
-      "--get-regexp",
-      "^(core\\.(sparsecheckout|autocrlf|symlinks|hookspath|worktree|protecthfs)|extensions\\.worktreeconfig|includeif\\..*\\.path)$",
-    ]),
-    git(primary, ["rev-parse", "--path-format=absolute", "--git-path", "hooks/post-checkout"]),
+  // worktree add discovers hooks in the creating checkout, then executes them
+  // in the new worktree. Leave real hooks to Git so discovery and failure match.
+  const [hooks, tree] = await Promise.all([
+    git(primary, ["hook", "list", "-z", "post-checkout"]),
     git(primary, ["ls-tree", "-rz", "--full-tree", head]),
   ]);
-  if ((config.code !== 0 && config.code !== 1) || hooks.code || tree.code)
-    return { reason: "could not inspect Git checkout inputs" };
-  // A valueless Git boolean is true. The last value wins for repeated keys.
-  const settings = new Map(
-    config.stdout
-      .toString()
-      .split("\0")
-      .filter(Boolean)
-      .map((entry) => {
-        const newline = entry.indexOf("\n");
-        return newline < 0 ? [entry, "true"] : [entry.slice(0, newline), entry.slice(newline + 1)];
-      }),
-  );
-  const isFalse = (value: string) => /^(?:|0|no|off|false)$/i.test(value);
-  if (!isFalse(settings.get("core.sparsecheckout") ?? "false"))
-    return { reason: "sparse checkout" };
-  if (!isFalse(settings.get("core.autocrlf") ?? "false"))
-    return { reason: "core.autocrlf conversion" };
-  if (isFalse(settings.get("core.symlinks") ?? "true"))
-    return { reason: "core.symlinks is disabled" };
-  if (isFalse(settings.get("core.protecthfs") ?? "true"))
-    return { reason: "Git macOS path protection is disabled" };
-  if (settings.has("core.hookspath") || existsSync(hooks.stdout.toString().replace(/\n$/, ""))) {
-    return { reason: "Git post-checkout hook may run" };
-  }
-  // Per-worktree config can differ between the primary and the new lane.
-  if (
-    !isFalse(settings.get("extensions.worktreeconfig") ?? "false") ||
-    settings.has("core.worktree") ||
-    [...settings.keys()].some((key) => key.startsWith("includeif."))
-  ) {
-    return { reason: "per-worktree Git config" };
+  if (tree.code) return { reason: "could not inspect target tree" };
+  if (hooks.code === 129) {
+    // Older Git can only discover executable files in the effective hooks dir.
+    const hook = await git(primary, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-path",
+      "hooks/post-checkout",
+    ]);
+    if (hook.code) return { reason: "could not inspect Git post-checkout hook" };
+    try {
+      accessSync(hook.stdout.toString().replace(/\n$/, ""), fsConstants.X_OK);
+      return { reason: "Git post-checkout hook" };
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !("code" in error) ||
+        (error.code !== "ENOENT" && error.code !== "ENOTDIR" && error.code !== "EACCES")
+      ) {
+        return { reason: "could not inspect Git post-checkout hook" };
+      }
+    }
+  } else if (hooks.code !== 0 && hooks.code !== 1) {
+    return { reason: "could not inspect Git post-checkout hook" };
+  } else if (hooks.stdout.length) {
+    const entries = hooks.stdout.toString().split("\0").filter(Boolean);
+    if (entries.some((entry) => !entry.startsWith("disabled\t"))) {
+      return { reason: "Git post-checkout hook" };
+    }
+    // A configured hook name can itself contain a tab. Check the ambiguous
+    // names so Git's display prefix cannot hide an actual enabled hook.
+    const names = await git(primary, [
+      "config",
+      "--null",
+      "--name-only",
+      "--get-regexp",
+      "^hook\\..*\\.event$",
+    ]);
+    if (names.code !== 0 && names.code !== 1)
+      return { reason: "could not inspect Git post-checkout hook" };
+    const keys = new Set(names.stdout.toString().split("\0"));
+    if (entries.some((entry) => keys.has(`hook.${entry}.event`))) {
+      return { reason: "Git post-checkout hook" };
+    }
   }
 
   const listing = tree.stdout.toString();
@@ -120,19 +128,68 @@ export async function planClone(
     }
     files.push({ path, symlink: mode === "120000" });
   }
+  return { files };
+}
+
+export async function cloneCheckoutReason(
+  lane: string,
+  head: string,
+  files: TrackedFile[],
+): Promise<string | undefined> {
   const paths = Buffer.from(files.map(({ path }) => path + "\0").join(""));
-  const attributes = await git(
-    primary,
-    ["check-attr", "--source", head, "-a", "-z", "--stdin"],
-    paths,
+  const [config, root, attributes] = await Promise.all([
+    git(lane, [
+      "config",
+      "--null",
+      "--get-regexp",
+      "^core\\.(sparsecheckout|autocrlf|symlinks|protecthfs)$",
+    ]),
+    git(lane, ["rev-parse", "--show-toplevel"]),
+    git(lane, ["check-attr", "--source", head, "-a", "-z", "--stdin"], paths),
+  ]);
+  if (root.code || root.stdout.toString() !== realpathSync.native(lane) + "\n") {
+    return "Git is configured to use a different worktree root";
+  }
+  if (config.code !== 0 && config.code !== 1) return "could not inspect worktree Git config";
+  // A valueless Git boolean is true. The last value wins for repeated keys.
+  const settings = new Map(
+    config.stdout
+      .toString()
+      .split("\0")
+      .filter(Boolean)
+      .map((entry) => {
+        const newline = entry.indexOf("\n");
+        return newline < 0 ? [entry, "true"] : [entry.slice(0, newline), entry.slice(newline + 1)];
+      }),
   );
-  if (attributes.code) return { reason: "could not inspect target Git attributes" };
+  const isFalse = (value: string) => /^(?:|0|no|off|false)$/i.test(value);
+  if (!isFalse(settings.get("core.sparsecheckout") ?? "false")) return "sparse checkout";
+  if (!isFalse(settings.get("core.autocrlf") ?? "false")) return "core.autocrlf conversion";
+  if (isFalse(settings.get("core.symlinks") ?? "true") && files.some(({ symlink }) => symlink)) {
+    return "core.symlinks is disabled for tracked symlinks";
+  }
+  if (isFalse(settings.get("core.protecthfs") ?? "true"))
+    return "Git macOS path protection is disabled";
+  if (attributes.code) return "could not inspect target Git attributes";
   const fields = attributes.stdout.toString().split("\0");
   for (let i = 1; i < fields.length; i += 3) {
-    if (CONVERSION_ATTRIBUTES.has(fields[i]!))
-      return { reason: `Git checkout attribute: ${fields[i]}` };
+    if (CONVERSION_ATTRIBUTES.has(fields[i]!)) return `Git checkout attribute: ${fields[i]}`;
   }
-  return { files };
+}
+
+export async function checkoutWithGit(lane: string): Promise<void> {
+  // On a freshly registered lane, read-tree uses Git's checkout machinery
+  // and refuses to overwrite a file that appeared since registration.
+  const result = await git(lane, [
+    `--work-tree=${lane}`,
+    "-c",
+    "submodule.recurse=false",
+    "read-tree",
+    "-m",
+    "-u",
+    "HEAD",
+  ]);
+  if (result.code) throw new Error(`Git checkout failed: ${result.stderr.trim()}`);
 }
 
 interface CloneBatch {
