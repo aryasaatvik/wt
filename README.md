@@ -293,7 +293,7 @@ bun run release:check
 - `check`: Oxfmt, Oxlint (no warnings), TypeScript 7 (source, tests, scripts and root configs), and normal offline Bun tests.
 - `format` writes formatting; `format:check`, `lint`, `typecheck` and `test` run individual gates.
 - `build`: compile the host distributable to `dist/wt`. No installed binary is replaced.
-- `build:release-artifacts`: compile the existing Darwin ARM64, Linux x64 baseline and Linux ARM64 targets, package completions and instructions, and write SHA256SUMS. The all-platform install above supplies native dependencies for cross-compilation.
+- `build:release-artifacts`: compile the existing Darwin ARM64, Linux x64 baseline and Linux ARM64 targets, package completions and instructions, and write SHA256SUMS. It first runs the frozen all-platform install, which supplies native dependencies for cross-compilation.
 - `test:artifact`: validate checksums and archive contents, then exercise the host binary and matching extracted archive with `--help` and an offline Git fixture, with no Bun or installed wt on PATH. Cross-compiled targets are inspected as archives; only matching host targets are executed.
 - `release:check`: run `check`, the host build, all release builds and `test:artifact`; no tag, release, upload or publication.
 - `release:publish` (also `release`): the existing manual GitHub binary publication driver. It requires clean, freshly fetched `origin/main`, installs frozen all-platform dependencies, and must pass `release:check` before creating/pushing a tag or creating/uploading a GitHub release. Validation failure stops publication. CI only validates; merging does not publish.
