@@ -45,12 +45,12 @@ export async function runWithGitFailure(repo: FixtureRepo, blockedCommand: strin
     shim,
     `#!/bin/sh
 for arg do
-  if [ "$arg" = '${blockedCommand}' ]; then
+  if [ "$arg" = "$WT_FIXTURE_BLOCKED_GIT_COMMAND" ]; then
     echo 'fixture Git command unavailable' >&2
     exit 1
   fi
 done
-exec '${git.replaceAll("'", "'\\\\''")}' "$@"
+exec "$WT_FIXTURE_GIT" "$@"
 `,
   );
   chmodSync(shim, 0o755);
@@ -68,6 +68,8 @@ exec '${git.replaceAll("'", "'\\\\''")}' "$@"
       env: {
         ...Bun.env,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
+        WT_FIXTURE_GIT: git,
+        WT_FIXTURE_BLOCKED_GIT_COMMAND: blockedCommand,
         GIT_CONFIG_GLOBAL: "/dev/null",
         GIT_CONFIG_SYSTEM: "/dev/null",
         XDG_CONFIG_HOME: join(repo.root, "config"),

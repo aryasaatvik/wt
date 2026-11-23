@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "bun";
 import pkg from "../package.json" with { type: "json" };
+import { readProvenance } from "../src/create.ts";
+import { clonefile, targetAttributes } from "../test/clone-fixture.ts";
 import { makeRepo } from "../test/harness.ts";
 
 const releaseRoot = resolve(import.meta.dir, "../dist/release");
@@ -26,7 +28,7 @@ try {
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_SYSTEM: "/dev/null",
   };
-  const smoke = (binary: string) => {
+  const smoke = (binary: string, branch: string) => {
     const help = spawnSync([binary, "--help"], { cwd: temp, env });
     assert.equal(help.exitCode, 0, help.stderr.toString());
     assert.match(help.stdout.toString(), /Usage:/);
@@ -45,8 +47,26 @@ try {
     const { checkoutKb, apparentKb, ownedKb, privateGitKb } = sizes[0].usage;
     assert(checkoutKb > 0 && apparentKb > 0);
     assert.equal(ownedKb, checkoutKb + privateGitKb);
+
+    const created = spawnSync([binary, "new", branch, "main", "--no-install"], {
+      cwd: repo.dir,
+      env,
+    });
+    assert.equal(created.exitCode, 0, created.stderr.toString());
+    const lane = join(repo.root, "repo-worktrees", branch);
+    const marker = readProvenance(lane);
+    assert.equal(marker?.phase, "ready");
+    assert.equal(repo.gitIn(lane, "status", "--porcelain"), "");
+    assert.equal(repo.gitIn(lane, "ls-files", "-s"), repo.git("ls-files", "-s"));
+    assert(readFileSync(join(lane, "README.md")).equals(readFileSync(join(repo.dir, "README.md"))));
+    if (process.platform !== "darwin" || !targetAttributes) {
+      assert.equal(marker.checkout?.mode, "git");
+    } else if (clonefile) {
+      assert.deepEqual(marker.checkout, { mode: "clone", cloned: 1, rewritten: 0 });
+    }
+    repo.git("worktree", "remove", lane);
   };
-  smoke(resolve(import.meta.dir, "../dist/wt"));
+  smoke(resolve(import.meta.dir, "../dist/wt"), "smoke-local");
   const sums = readFileSync(join(releaseRoot, "SHA256SUMS"), "utf8").trim().split("\n");
   const labels = ["darwin-arm64", "linux-x64", "linux-arm64"];
   assert.equal(sums.length, labels.length);
@@ -66,7 +86,7 @@ try {
     );
     assert.match(readFileSync(join(unpacked, "README.txt"), "utf8"), /No bun runtime needed/);
     if (label === `${process.platform}-${process.arch}`) {
-      smoke(join(unpacked, "wt"));
+      smoke(join(unpacked, "wt"), "smoke-archive");
       console.log(`Executed extracted ${label} binary; other targets checked as archives only.`);
     }
   }
