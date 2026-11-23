@@ -1,7 +1,16 @@
 // wt new — create a worktree, sync gitignored config, install dependencies.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import {
+  type CheckoutRecord,
+  type ClonePlan,
+  checkoutClone,
+  checkoutWithGit,
+  cloneCheckoutReason,
+  planClone,
+} from "./clone.ts";
 import {
   type CreateSource,
   listWorktrees,
@@ -30,6 +39,17 @@ export interface CreateConfig {
 }
 
 const CONFIG_FILE = "wt.toml";
+
+function readCloneEnabled(): boolean {
+  const configHome = process.env.XDG_CONFIG_HOME || join(process.env.HOME || homedir(), ".config");
+  const path = join(configHome, "wt", "config.toml");
+  if (!existsSync(path)) return true;
+  const parsed = Bun.TOML.parse(readFileSync(path, "utf8")) as { create?: { clone?: unknown } };
+  const value = parsed.create?.clone;
+  if (value !== undefined && typeof value !== "boolean")
+    throw new Error(`${path}: create.clone must be a boolean`);
+  return value ?? true;
+}
 
 /**
  * Read repository create policy from `<repoRoot>/wt.toml`. Read from the primary
@@ -89,6 +109,8 @@ export interface ProvenanceMarker {
   base: string | null;
   /** Absent on markers written before source selection was recorded. */
   source?: CreateSource;
+  /** Absent on markers written before checkout mode was recorded. */
+  checkout?: CheckoutRecord;
   phase: "created" | "synced" | "installing" | "post-install" | "ready" | "incomplete";
   syncedFiles: string[];
   failure?: string;
@@ -144,8 +166,10 @@ export async function cmdNew(
   const repoRoot = resolvePrimaryRepo(opts.cwd);
   const source = resolveCreateSource(repoRoot, branch, base);
   let createConfig: CreateConfig;
+  let cloneEnabled: boolean;
   try {
     createConfig = readCreateConfig(repoRoot);
+    cloneEnabled = process.platform !== "darwin" || readCloneEnabled();
   } catch (e) {
     err(e instanceof Error ? e.message : String(e));
     throw new ExitError(1);
@@ -159,6 +183,7 @@ export async function cmdNew(
   const existing = source.kind === "local";
   let fastForwardedFrom: string | null = null;
   let laneCreated = false;
+  let checkoutPlan: ClonePlan;
   try {
     if (existing && base !== undefined) {
       const baseHead = run([
@@ -222,14 +247,21 @@ export async function cmdNew(
         flag === "-t" || flag === "--track" || flag.startsWith("--track=") || flag === "--no-track",
     );
     const newBranchFlags = opts.extraFlags.map((flag) => (flag === "-t" ? "--track" : flag));
+    checkoutPlan = cloneEnabled
+      ? await planClone(repoRoot, source.head, opts.extraFlags)
+      : { reason: "disabled by create.clone in user config" };
+    const add = [
+      "git",
+      "-C",
+      repoRoot,
+      "worktree",
+      "add",
+      ...("files" in checkoutPlan ? ["--no-checkout"] : []),
+    ];
     const addArgs = existing
-      ? ["git", "-C", repoRoot, "worktree", "add", wtDir, branch, ...opts.extraFlags]
+      ? [...add, wtDir, branch, ...opts.extraFlags]
       : [
-          "git",
-          "-C",
-          repoRoot,
-          "worktree",
-          "add",
+          ...add,
           ...(trackingFlag ? [] : ["--no-track"]),
           "-b",
           branch,
@@ -282,16 +314,52 @@ export async function cmdNew(
   log(`Worktree created at ${dim(wtDir)}`);
 
   const createdAt = new Date().toISOString();
+  const checkout: CheckoutRecord =
+    "files" in checkoutPlan
+      ? { mode: "clone", cloned: 0, rewritten: 0 }
+      : { mode: "git", cloned: 0, rewritten: 0, reason: checkoutPlan.reason };
   const marker: ProvenanceMarker = {
     createdAt,
     updatedAt: createdAt,
     branch,
     base: existing ? null : source.ref,
     source,
+    checkout,
     phase: "created",
     syncedFiles: [],
   };
   writeProvenance(wtDir, marker);
+
+  if ("files" in checkoutPlan) {
+    const checkoutSpin = spinner("Checking out tracked files");
+    try {
+      const reason = await cloneCheckoutReason(wtDir, source.head, checkoutPlan.files);
+      if (reason) {
+        checkout.mode = "git";
+        checkout.reason = reason;
+        await checkoutWithGit(wtDir);
+      } else {
+        checkoutSpin.update("Cloning and verifying tracked files");
+        await checkoutClone(repoRoot, wtDir, source.head, checkoutPlan.files, checkout);
+      }
+    } catch (e) {
+      checkoutSpin.stop();
+      marker.phase = "incomplete";
+      marker.failure = e instanceof Error ? e.message : String(e);
+      const quotedLane = shellQuote(wtDir);
+      marker.recoveryCommand = `git -C ${quotedLane} --work-tree=${quotedLane} restore --source=HEAD --staged --worktree -- .`;
+      writeProvenance(wtDir, marker);
+      err("Failed to check out tracked files");
+      detail(
+        `${marker.failure}\nWorktree kept at ${wtDir}\n` +
+          `After saving any local edits, restore tracked files with: ${marker.recoveryCommand}\n` +
+          `Then run wt sync and any remaining setup steps.`,
+      );
+      throw new ExitError(1);
+    }
+    checkoutSpin.stop();
+    writeProvenance(wtDir, marker);
+  }
 
   info("Syncing gitignored files");
   let synced: string[] = [];

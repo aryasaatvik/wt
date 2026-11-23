@@ -4,11 +4,342 @@ import { join } from "node:path";
 import { cmdNew, readProvenance } from "../src/create.ts";
 import { defaultBase, resolvePrimaryRepo } from "../src/git.ts";
 import { ExitError } from "../src/ui.ts";
+import { clonefile, targetAttributes, runWithGitFailure } from "./clone-fixture.ts";
 import { makeRepo } from "./harness.ts";
 
 const OPTS = { verbose: false, install: false, extraFlags: [] };
 
 describe("cmdNew", () => {
+  test.if(process.platform === "darwin")(
+    "checks out with Git when target attribute lookup is unavailable",
+    async () => {
+      const repo = makeRepo();
+      try {
+        const run = await runWithGitFailure(repo, "check-attr", "feat/old-git");
+        expect(run.stderr.toString()).toBe("");
+        expect(run.exitCode).toBe(0);
+        const lane = join(repo.root, "repo-worktrees", "feat-old-git");
+        expect(readProvenance(lane)?.checkout).toEqual({
+          mode: "git",
+          cloned: 0,
+          rewritten: 0,
+          reason: "could not inspect target Git attributes",
+        });
+        expect(repo.gitIn(lane, "status", "--porcelain")).toBe("");
+        expect(await Bun.file(join(lane, "README.md")).text()).toBe("fixture\n");
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(targetAttributes && process.platform === "darwin" && !clonefile)(
+    "lets Git populate tracked files on a volume without clone support",
+    async () => {
+      const repo = makeRepo();
+      try {
+        const lane = await cmdNew("feat/no-clonefile", "main", { ...OPTS, cwd: repo.dir });
+        expect(readProvenance(lane)?.checkout).toMatchObject({
+          mode: "clone",
+          cloned: 0,
+          rewritten: 1,
+        });
+        expect(repo.gitIn(lane, "status", "--porcelain")).toBe("");
+        expect(await Bun.file(join(lane, "README.md")).text()).toBe("fixture\n");
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(targetAttributes && process.platform === "darwin")(
+    "records and prints a recovery command after a tracked checkout failure",
+    async () => {
+      const repo = makeRepo();
+      try {
+        const run = await runWithGitFailure(repo, "diff-files", "feat/interrupted");
+        expect(run.exitCode).toBe(1);
+        const lane = join(repo.root, "repo-worktrees", "feat-interrupted");
+        const marker = readProvenance(lane);
+        expect(marker).toMatchObject({
+          phase: "incomplete",
+          failure: "git diff-files failed: fixture Git command unavailable",
+        });
+        const command = marker?.recoveryCommand;
+        if (!command) throw new Error("missing checkout recovery command");
+        expect(run.stderr.toString()).toContain(command);
+        expect(existsSync(join(lane, ".scratchpad"))).toBe(false);
+        repo.gitIn(lane, "update-index", "--force-remove", "--", "README.md");
+        const recovery = Bun.spawnSync(["/bin/sh", "-c", command]);
+        expect(recovery.stderr.toString()).toBe("");
+        expect(recovery.success).toBe(true);
+        expect(repo.gitIn(lane, "status", "--porcelain")).toBe("");
+        expect(await Bun.file(join(lane, "README.md")).text()).toBe("fixture\n");
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(clonefile && targetAttributes)(
+    "clones with an empty effective hooks directory and worktree config enabled",
+    async () => {
+      const repo = makeRepo();
+      try {
+        repo.git("config", "core.hooksPath", join(repo.dir, ".git", "hooks"));
+        repo.git("config", "extensions.worktreeConfig", "true");
+        repo.git("config", "hook.disabled-fixture.event", "post-checkout");
+        repo.git("config", "hook.disabled-fixture.command", "exit 1");
+        repo.git("config", "hook.disabled-fixture.enabled", "false");
+        expect(existsSync(join(repo.dir, ".git", "config.worktree"))).toBe(false);
+        const lane = await cmdNew("feat/no-hook", "main", { ...OPTS, cwd: repo.dir });
+        expect(readProvenance(lane)?.checkout).toEqual({ mode: "clone", cloned: 1, rewritten: 0 });
+        expect(repo.gitIn(lane, "status", "--porcelain")).toBe("");
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(process.platform === "darwin")(
+    "lets Git discover and run its post-checkout hook once",
+    async () => {
+      const repo = makeRepo();
+      try {
+        const hooks = join(repo.dir, ".git", "custom-hooks");
+        mkdirSync(hooks);
+        const hook = join(hooks, "post-checkout");
+        await Bun.write(hook, '#!/bin/sh\nprintf "%s\\n" "$PWD" "$@" >> hook-call.txt\n');
+        chmodSync(hook, 0o755);
+        repo.git("config", "core.hooksPath", ".git/custom-hooks");
+        const head = repo.git("rev-parse", "HEAD").trim();
+        const opts = { ...OPTS, cwd: repo.dir };
+        const native = await cmdNew("feat/hook", "main", opts);
+        const run = await runWithGitFailure(repo, "hook", "feat/legacy-hook");
+        expect(run.stderr.toString()).toBe("");
+        expect(run.exitCode).toBe(0);
+        const legacy = join(repo.root, "repo-worktrees", "feat-legacy-hook");
+        for (const lane of [native, legacy]) {
+          expect(readProvenance(lane)?.checkout).toEqual({
+            mode: "git",
+            cloned: 0,
+            rewritten: 0,
+            reason: "Git post-checkout hook",
+          });
+          expect(await Bun.file(join(lane, "hook-call.txt")).text()).toBe(
+            `${lane}\n${"0".repeat(head.length)}\n${head}\n1\n`,
+          );
+        }
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(process.platform === "darwin")(
+    "checks conditional config against the new lane's Git directory",
+    async () => {
+      const repo = makeRepo();
+      try {
+        const config = join(repo.root, "checkout.gitconfig");
+        await Bun.write(config, "[core]\n  autocrlf = true\n");
+        repo.git("config", "includeIf.gitdir:**/worktrees/*-converted.path", config);
+        const converted = await cmdNew("feat/converted", "main", { ...OPTS, cwd: repo.dir });
+        const head = repo.git("rev-parse", "HEAD").trim();
+        const plain = repo.addWorktree("plain-converted", { detachAt: head });
+        expect(readProvenance(converted)?.checkout).toEqual({
+          mode: "git",
+          cloned: 0,
+          rewritten: 0,
+          reason: "core.autocrlf conversion",
+        });
+        expect(await Bun.file(join(converted, "README.md")).text()).toBe("fixture\r\n");
+        expect(await Bun.file(join(plain, "README.md")).text()).toBe("fixture\r\n");
+        expect(repo.gitIn(converted, "ls-files", "-s")).toBe(repo.gitIn(plain, "ls-files", "-s"));
+
+        const unaffected = await cmdNew("feat/eligible", "main", { ...OPTS, cwd: repo.dir });
+        const checkout = readProvenance(unaffected)?.checkout;
+        expect(checkout?.mode).toBe(targetAttributes ? "clone" : "git");
+        if (clonefile && targetAttributes) expect(checkout?.cloned).toBe(1);
+        expect(await Bun.file(join(unaffected, "README.md")).text()).toBe("fixture\n");
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(process.platform === "darwin")(
+    "preserves sparse patterns inherited from the primary",
+    async () => {
+      const repo = makeRepo();
+      try {
+        repo.write("keep/file", "included\n");
+        repo.write("omit/file", "excluded\n");
+        const head = repo.commit("add directories");
+        repo.git("sparse-checkout", "set", "keep");
+        const lane = await cmdNew("feat/sparse", "main", { ...OPTS, cwd: repo.dir });
+        const plain = repo.addWorktree("plain-sparse", { detachAt: head });
+        expect(readProvenance(lane)?.checkout).toEqual({
+          mode: "git",
+          cloned: 0,
+          rewritten: 0,
+          reason: "sparse checkout",
+        });
+        expect(repo.gitIn(lane, "ls-files", "-v")).toBe(repo.gitIn(plain, "ls-files", "-v"));
+        expect(existsSync(join(lane, "keep", "file"))).toBe(true);
+        expect(existsSync(join(lane, "omit", "file"))).toBe(false);
+        expect(repo.gitIn(lane, "status", "--porcelain")).toBe("");
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(clonefile && targetAttributes)(
+    "clones files and lets Git fill paths blocked by a primary file or symlink",
+    async () => {
+      const repo = makeRepo();
+      try {
+        repo.git("checkout", "-b", "target");
+        repo.write("file-to-dir/child", "target directory\n");
+        repo.write("symlink-to-dir/child", "target without symlinks\n");
+        repo.write("dir-to-file", "target file\n");
+        const head = repo.commit("target files");
+        repo.git("checkout", "main");
+        repo.write("file-to-dir", "primary file\n");
+        repo.write("dir-to-file/child", "primary directory\n");
+        repo.write("outside/child", "must stay outside the lane\n");
+        symlinkSync("outside", join(repo.dir, "symlink-to-dir"));
+
+        const lane = await cmdNew("feat/clone", "target", { ...OPTS, cwd: repo.dir });
+        const plain = repo.addWorktree("plain", { detachAt: head });
+        expect(readProvenance(lane)).toMatchObject({
+          phase: "ready",
+          checkout: { mode: "clone", cloned: 1, rewritten: 3 },
+        });
+        expect(repo.gitIn(lane, "status", "--porcelain")).toBe("");
+        expect(repo.gitIn(lane, "ls-files", "-s")).toBe(repo.gitIn(plain, "ls-files", "-s"));
+        for (const path of [
+          "README.md",
+          "file-to-dir/child",
+          "symlink-to-dir/child",
+          "dir-to-file",
+        ]) {
+          expect(await Bun.file(join(lane, path)).text()).toBe(
+            await Bun.file(join(plain, path)).text(),
+          );
+        }
+        expect(existsSync(join(lane, "outside"))).toBe(false);
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(process.platform === "darwin")(
+    "uses the standard checkout for target attributes",
+    async () => {
+      const repo = makeRepo();
+      try {
+        repo.git("checkout", "-b", "converted");
+        repo.write(".gitattributes", "*.md eol=crlf\n");
+        repo.commit("add checkout conversion");
+        repo.git("checkout", "main");
+        const lane = await cmdNew("feat/converted", "converted", { ...OPTS, cwd: repo.dir });
+        expect(readProvenance(lane)?.checkout).toEqual({
+          mode: "git",
+          cloned: 0,
+          rewritten: 0,
+          reason: targetAttributes
+            ? "Git checkout attribute: eol"
+            : "could not inspect target Git attributes",
+        });
+        expect(await Bun.file(join(lane, "README.md")).text()).toBe("fixture\r\n");
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(process.platform === "darwin")(
+    "uses the standard checkout for a target gitlink",
+    async () => {
+      const repo = makeRepo();
+      try {
+        const head = repo.git("rev-parse", "HEAD").trim();
+        repo.git("update-index", "--add", "--cacheinfo", `160000,${head},module`);
+        repo.git("commit", "-m", "add gitlink");
+        const lane = await cmdNew("feat/gitlink", "main", { ...OPTS, cwd: repo.dir });
+        expect(readProvenance(lane)?.checkout).toEqual({
+          mode: "git",
+          cloned: 0,
+          rewritten: 0,
+          reason: "target tree contains gitlinks",
+        });
+        expect(lstatSync(join(lane, "module")).isDirectory()).toBe(true);
+        expect(repo.gitIn(lane, "status", "--porcelain")).toBe("");
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test("honors an explicit --no-checkout using the standard Git path", async () => {
+    const repo = makeRepo();
+    try {
+      const lane = await cmdNew("feat/no-checkout", "main", {
+        ...OPTS,
+        cwd: repo.dir,
+        extraFlags: ["--no-checkout"],
+      });
+      expect(readProvenance(lane)?.checkout?.mode).toBe("git");
+      expect(existsSync(join(lane, "README.md"))).toBe(false);
+      expect(repo.gitIn(lane, "ls-files")).toBe("");
+    } finally {
+      repo.rm();
+    }
+  });
+
+  test.if(process.platform === "darwin")("honors the user-config clone opt-out", async () => {
+    const repo = makeRepo();
+    const previous = process.env.XDG_CONFIG_HOME;
+    try {
+      process.env.XDG_CONFIG_HOME = join(repo.root, "config");
+      const configDir = join(process.env.XDG_CONFIG_HOME, "wt");
+      mkdirSync(configDir, { recursive: true });
+      await Bun.write(join(configDir, "config.toml"), "[create]\nclone = false\n");
+      const lane = await cmdNew("feat/opt-out", "main", { ...OPTS, cwd: repo.dir });
+      expect(readProvenance(lane)?.checkout).toEqual({
+        mode: "git",
+        cloned: 0,
+        rewritten: 0,
+        reason: "disabled by create.clone in user config",
+      });
+      expect(await Bun.file(join(lane, "README.md")).text()).toBe("fixture\n");
+    } finally {
+      if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = previous;
+      repo.rm();
+    }
+  });
+
+  test.if(process.platform !== "darwin")("uses the standard checkout outside macOS", async () => {
+    const repo = makeRepo();
+    try {
+      const lane = await cmdNew("feat/plain", "main", { ...OPTS, cwd: repo.dir });
+      expect(readProvenance(lane)?.checkout).toEqual({
+        mode: "git",
+        cloned: 0,
+        rewritten: 0,
+        reason: "APFS cloning requires macOS",
+      });
+      expect(await Bun.file(join(lane, "README.md")).text()).toBe("fixture\n");
+      expect(repo.gitIn(lane, "status", "--porcelain")).toBe("");
+    } finally {
+      repo.rm();
+    }
+  });
+
   test("creates the worktree, syncs config, skips artifacts and dangling e2e links", async () => {
     const repo = makeRepo();
     try {
