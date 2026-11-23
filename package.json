@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun run test",
-    "build": "bun build src/index.ts --compile --outfile=dist/wt",
+    "build": "bun build src/index.ts src/apfs-worker.ts --compile --outfile=dist/wt",
     "build:release-artifacts": "bun scripts/build-release-artifacts.ts",
     "test:artifact": "bun scripts/check-artifacts.ts",
     "release:check": "bun run check && bun run build && bun run build:release-artifacts && bun run test:artifact",

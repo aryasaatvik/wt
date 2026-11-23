@@ -169,9 +169,9 @@ esac
 describe("scanWorktrees", () => {
   const cache = (ownedKb: number, measuredAt = new Date().toISOString()) =>
     JSON.stringify({
-      version: 3,
+      version: 4,
       measuredAt,
-      usage: { checkoutKb: ownedKb, privateGitKb: 0, ownedKb, sharedKb: 1 },
+      usage: { checkoutKb: ownedKb, apparentKb: ownedKb, privateGitKb: 0, ownedKb, sharedKb: 1 },
     });
   test("keeps merge commits from both branch listing and commit lookup", async () => {
     const repo = makeRepo();

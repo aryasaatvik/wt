@@ -34,7 +34,7 @@ function resolveTargetPath(cwd: string, target: string): string {
 }
 
 function renderDiskTable(records: WorktreeDiskReport[]): string {
-  const header = "WORKTREE\tCHECKOUT\tPRIVATE GIT\tOWNED\tSHARED";
+  const header = "WORKTREE\tCHECKOUT\tPRIVATE GIT\tOWNED\tAPPARENT\tSHARED";
   return [
     header,
     ...records.map((record) => {
@@ -44,6 +44,7 @@ function renderDiskTable(records: WorktreeDiskReport[]): string {
         humanSize(usage?.checkoutKb ?? null),
         humanSize(usage?.privateGitKb ?? null),
         humanSize(usage?.ownedKb ?? null),
+        humanSize(usage?.apparentKb ?? null),
         humanSize(usage?.sharedKb ?? null),
       ].join("\t");
     }),

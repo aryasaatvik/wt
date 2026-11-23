@@ -25,7 +25,7 @@ export interface WorktreeStatus {
   ahead: number | null;
   behind: number | null;
   sizeKb: number | null;
-  /** true when sizeKb came from the on-disk cache rather than a fresh `du` */
+  /** true when sizeKb came from the on-disk cache. */
   sizeCached: boolean;
   /** Owned checkout + lane-private Git metadata; shared Git storage is separate. */
   diskUsage: WorktreeDiskUsage | null;
@@ -43,7 +43,7 @@ export interface PrInfo {
   mergeCommit: string | null;
 }
 
-/** "cached" reuses a recent `du` result; "fresh" always remeasures; "skip" omits size. */
+/** "cached" reuses a recent size measurement; "fresh" always remeasures; "skip" omits size. */
 export type SizeMode = "cached" | "fresh" | "skip";
 
 export interface ScanOptions {
