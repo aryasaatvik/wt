@@ -197,6 +197,18 @@ New branches do not track their base, including `origin/<parent>` for a stacked 
 
 Creation prints the selected source ref and SHA and records them as `source: { kind, ref, head }` in the worktree's private Git directory, in `wt.json`. `kind` is `local`, `origin`, or `base`. The marker also records its current phase (`created`, `synced`, `installing`, `post-install`, `ready`, or `incomplete`). A failed dependency install exits nonzero and keeps the worktree for diagnosis, with the exact `cd … && ni` recovery command in both the terminal and marker. It never labels an incomplete worktree ready.
 
+On macOS, `wt new` can share APFS data blocks with the primary checkout. It creates a linked worktree with `git worktree add --no-checkout` and clones tracked files and symlinks from the primary without following directory symlinks. Git verifies the files against the target commit and writes missing or different files before sync and install. If verification fails, the worktree stays in place and its marker records an incomplete checkout.
+
+Git handles the standard checkout on other platforms, with extra Git flags, or when the target or Git configuration needs behavior such as sparse checkout, checkout filters or line-ending conversion, submodule entries, or a post-checkout hook. If the filesystem refuses cloning because the volumes differ or cloning is unsupported, Git fills in the remaining files. The marker's `checkout` entry records the mode (`clone` or `git`), how many APFS clones succeeded, how many paths Git had to write during clone verification, and the fallback reason when available.
+
+To use the standard Git checkout for every repository, set this in your user config:
+
+```toml
+# ~/.config/wt/config.toml (or $XDG_CONFIG_HOME/wt/config.toml)
+[create]
+clone = false
+```
+
 ### File sync
 
 When the repository has a `.worktreeinclude`, it is the source of truth for file sync. Patterns use Git's ignore syntax, including comments, `!` negation, `/` anchoring, and `**`:

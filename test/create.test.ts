@@ -112,6 +112,29 @@ describe("cmdNew", () => {
     }
   });
 
+  test.if(process.platform === "darwin")("honors the user-config clone opt-out", async () => {
+    const repo = makeRepo();
+    const previous = process.env.XDG_CONFIG_HOME;
+    try {
+      process.env.XDG_CONFIG_HOME = join(repo.root, "config");
+      const configDir = join(process.env.XDG_CONFIG_HOME, "wt");
+      mkdirSync(configDir, { recursive: true });
+      await Bun.write(join(configDir, "config.toml"), "[create]\nclone = false\n");
+      const lane = await cmdNew("feat/opt-out", "main", { ...OPTS, cwd: repo.dir });
+      expect(readProvenance(lane)?.checkout).toEqual({
+        mode: "git",
+        cloned: 0,
+        rewritten: 0,
+        reason: "disabled by create.clone in user config",
+      });
+      expect(await Bun.file(join(lane, "README.md")).text()).toBe("fixture\n");
+    } finally {
+      if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = previous;
+      repo.rm();
+    }
+  });
+
   test.if(process.platform !== "darwin")("uses the standard checkout outside macOS", async () => {
     const repo = makeRepo();
     try {

@@ -1,6 +1,7 @@
 // wt new — create a worktree, sync gitignored config, install dependencies.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { type CheckoutRecord, type ClonePlan, checkoutClone, planClone } from "./clone.ts";
 import {
@@ -31,6 +32,17 @@ export interface CreateConfig {
 }
 
 const CONFIG_FILE = "wt.toml";
+
+function readCloneEnabled(): boolean {
+  const configHome = process.env.XDG_CONFIG_HOME || join(process.env.HOME || homedir(), ".config");
+  const path = join(configHome, "wt", "config.toml");
+  if (!existsSync(path)) return true;
+  const parsed = Bun.TOML.parse(readFileSync(path, "utf8")) as { create?: { clone?: unknown } };
+  const value = parsed.create?.clone;
+  if (value !== undefined && typeof value !== "boolean")
+    throw new Error(`${path}: create.clone must be a boolean`);
+  return value ?? true;
+}
 
 /**
  * Read repository create policy from `<repoRoot>/wt.toml`. Read from the primary
@@ -147,8 +159,10 @@ export async function cmdNew(
   const repoRoot = resolvePrimaryRepo(opts.cwd);
   const source = resolveCreateSource(repoRoot, branch, base);
   let createConfig: CreateConfig;
+  let cloneEnabled: boolean;
   try {
     createConfig = readCreateConfig(repoRoot);
+    cloneEnabled = process.platform !== "darwin" || readCloneEnabled();
   } catch (e) {
     err(e instanceof Error ? e.message : String(e));
     throw new ExitError(1);
@@ -226,7 +240,9 @@ export async function cmdNew(
         flag === "-t" || flag === "--track" || flag.startsWith("--track=") || flag === "--no-track",
     );
     const newBranchFlags = opts.extraFlags.map((flag) => (flag === "-t" ? "--track" : flag));
-    checkoutPlan = await planClone(repoRoot, source.head, opts.extraFlags);
+    checkoutPlan = cloneEnabled
+      ? await planClone(repoRoot, source.head, opts.extraFlags)
+      : { reason: "disabled by create.clone in user config" };
     const add = [
       "git",
       "-C",
