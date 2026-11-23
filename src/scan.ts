@@ -28,7 +28,7 @@ export interface WorktreeStatus {
   /** true when sizeKb came from the on-disk cache. */
   sizeCached: boolean;
   /** Owned checkout + lane-private Git metadata; shared Git storage is separate. */
-  diskUsage: Omit<WorktreeDiskUsage, "realKb"> | null;
+  diskUsage: WorktreeDiskUsage | null;
   lastCommitAt: string | null;
   mtimeMs: number | null;
   prState: PrState;
@@ -267,11 +267,6 @@ async function probe(
     // worktree dir may be gone (prunable) — keep the record, without mtime
   }
 
-  let diskUsage: WorktreeStatus["diskUsage"] = null;
-  if (disk) {
-    const { realKb: _realKb, ...usage } = disk.usage;
-    diskUsage = usage;
-  }
   return {
     path: wt.path,
     slug: basename(wt.path),
@@ -288,7 +283,7 @@ async function probe(
     behind,
     sizeKb: disk?.usage.ownedKb ?? null,
     sizeCached: disk?.cached ?? false,
-    diskUsage,
+    diskUsage: disk?.usage ?? null,
     lastCommitAt: lastCommitRes.ok ? lastCommitRes.stdout.trim() || null : null,
     mtimeMs,
   };

@@ -7,13 +7,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { privateBytes } from "./apfs.ts";
+import { measurePrivateBytes } from "./apfs-measure.ts";
 import { listWorktrees, resolvePrimaryRepo } from "./git.ts";
 import { runAsync } from "./term.ts";
 
 export interface WorktreeDiskUsage {
   checkoutKb: number;
-  realKb: number;
+  apparentKb: number;
   privateGitKb: number;
   ownedKb: number;
   sharedKb?: number;
@@ -76,8 +76,8 @@ async function sumKb(paths: string[]): Promise<number> {
 async function measureCheckout(
   worktree: string,
   metadata: RepoMetadata[],
-): Promise<Pick<WorktreeDiskUsage, "checkoutKb" | "realKb">> {
-  if (!existsSync(worktree)) return { checkoutKb: 0, realKb: 0 };
+): Promise<Pick<WorktreeDiskUsage, "checkoutKb" | "apparentKb">> {
+  if (!existsSync(worktree)) return { checkoutKb: 0, apparentKb: 0 };
   const entries = readdirSync(worktree)
     .filter((name) => name !== ".git")
     .map((name) => join(worktree, name));
@@ -97,9 +97,12 @@ async function measureCheckout(
       .flatMap((item) => [item.gitDir, item.commonDir])
       .filter((path) => contains(worktree, path) && !contains(topGit, path)),
   );
-  const checkoutKb = Math.max(0, total - (await sumKb(nestedMetadata)));
-  const bytes = privateBytes(worktree, new Set([topGit, ...nestedMetadata]));
-  return { checkoutKb, realKb: bytes === null ? checkoutKb : Math.ceil(bytes / 1024) };
+  const [nestedKb, bytes] = await Promise.all([
+    sumKb(nestedMetadata),
+    measurePrivateBytes(worktree, [topGit, ...nestedMetadata]),
+  ]);
+  const apparentKb = Math.max(0, total - nestedKb);
+  return { checkoutKb: bytes === null ? apparentKb : Math.ceil(bytes / 1024), apparentKb };
 }
 
 async function metadataFor(repoPath: string): Promise<RepoMetadata | null> {
@@ -157,7 +160,7 @@ function readCache(path: string | null): WorktreeDiskUsage | null {
       return null;
     const fields = [
       value.usage.checkoutKb,
-      value.usage.realKb,
+      value.usage.apparentKb,
       value.usage.privateGitKb,
       value.usage.ownedKb,
     ];
@@ -262,7 +265,7 @@ export async function measureDiskUsage(
       const usage = {
         ...checkout,
         privateGitKb,
-        ownedKb: checkout.realKb + privateGitKb,
+        ownedKb: checkout.checkoutKb + privateGitKb,
         sharedKb,
       };
       writeCache(cachePath(tree), usage);

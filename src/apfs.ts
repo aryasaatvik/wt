@@ -1,6 +1,7 @@
-import { dlopen, FFIType } from "bun:ffi";
-import { lstatSync, readdirSync } from "node:fs";
+import { dlopen, FFIType, read } from "bun:ffi";
+import { type Dirent, lstatSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { constants } from "node:os";
 
 const ATTR_CMN_RETURNED_ATTRS = 0x80000000;
 const ATTR_CMN_FSID = 0x00000004;
@@ -27,6 +28,7 @@ function attributes(common: number, volume: number, file: number, extended: numb
 function openLibSystem() {
   try {
     return dlopen("/usr/lib/libSystem.B.dylib", {
+      __error: { args: [], returns: FFIType.ptr },
       getattrlist: {
         args: [FFIType.cstring, FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.u32],
         returns: FFIType.i32,
@@ -49,7 +51,10 @@ export function privateBytes(
   if (!lib) return null;
 
   try {
-    const { getattrlist } = lib.symbols;
+    const { getattrlist, __error } = lib.symbols;
+    // errno is thread-local and must be checked immediately after a failed syscall.
+    const errno = __error();
+    if (!errno) return null;
     const encoder = new TextEncoder();
     const volume = attributes(0, ATTR_VOL_INFO | ATTR_VOL_FSTYPENAME, 0, 0);
     const volumeBuffer = new Uint8Array(64);
@@ -87,7 +92,14 @@ export function privateBytes(
     let bytes = 0;
     let dir: string | undefined;
     while ((dir = pending.pop()) !== undefined) {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      let entries: Dirent[];
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+        throw error;
+      }
+      for (const entry of entries) {
         const path = join(dir, entry.name);
         if (excludedPaths.has(path)) continue;
         if (entry.isDirectory()) {
@@ -95,7 +107,12 @@ export function privateBytes(
         } else if (entry.isFile()) {
           if (
             getattrlist(encoder.encode(path + "\0"), requested, buffer, buffer.length, options) !==
-              0 ||
+            0
+          ) {
+            if (read.i32(errno) === constants.errno.ENOENT) continue;
+            return null;
+          }
+          if (
             (view.getUint32(4, true) & common) >>> 0 !== common >>> 0 ||
             (view.getUint32(16, true) & ATTR_FILE_LINKCOUNT) === 0 ||
             (view.getUint32(20, true) & ATTR_CMNEXT_PRIVATESIZE) === 0

@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cmdDu } from "../src/du.ts";
 import { measureDiskUsage } from "../src/disk.ts";
+import { cmdLs } from "../src/ls.ts";
 import { makeRepo } from "./harness.ts";
 
 describe("owned disk accounting", () => {
@@ -38,8 +39,9 @@ describe("owned disk accounting", () => {
       expect(primaryUsage.checkoutKb).toBeGreaterThan(0);
       expect(primaryUsage.privateGitKb).toBe(0);
       expect(linkedUsage.checkoutKb).toBeGreaterThanOrEqual(64);
+      expect(linkedUsage.apparentKb).toBeGreaterThanOrEqual(64);
       expect(linkedUsage.privateGitKb).toBeGreaterThanOrEqual(128);
-      expect(linkedUsage.ownedKb).toBe(linkedUsage.realKb + linkedUsage.privateGitKb);
+      expect(linkedUsage.ownedKb).toBe(linkedUsage.checkoutKb + linkedUsage.privateGitKb);
       expect(linkedUsage.sharedKb).toBeGreaterThan(0);
 
       const cachePath = join(
@@ -52,14 +54,27 @@ describe("owned disk accounting", () => {
         await cmdDu({ cwd: repo.dir, target: "feat/lane", json: true, fresh: false }),
       );
       expect(json).toHaveLength(1);
-      expect(json[0].usage).toEqual(
-        expect.objectContaining({
-          checkoutKb: linkedUsage.checkoutKb,
-          apparentKb: linkedUsage.checkoutKb,
-          privateGitKb: linkedUsage.privateGitKb,
-          ownedKb: linkedUsage.ownedKb,
+      const laneSizes = {
+        checkoutKb: linkedUsage.checkoutKb,
+        apparentKb: linkedUsage.apparentKb,
+        privateGitKb: linkedUsage.privateGitKb,
+        ownedKb: linkedUsage.ownedKb,
+      };
+      expect(json[0].usage).toMatchObject(laneSizes);
+      const listing = JSON.parse(
+        await cmdLs({
+          cwd: repo.dir,
+          all: false,
+          json: true,
+          scan: { resolvePrsByCommit: false },
         }),
       );
+      const listedLane = listing.find(
+        (record: { branch: string }) => record.branch === "feat/lane",
+      );
+      expect(listedLane.sizeKb).toBe(linkedUsage.ownedKb);
+      expect(listedLane.diskUsage).toMatchObject(laneSizes);
+
       const table = await cmdDu({ cwd: repo.dir, target: "feat/lane", json: false, fresh: false });
       expect(table.split("\n")[0]).toBe("WORKTREE\tCHECKOUT\tPRIVATE GIT\tOWNED\tAPPARENT\tSHARED");
     } finally {

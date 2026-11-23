@@ -55,7 +55,7 @@ async function buildTarget(target: ReleaseTarget) {
   await rm(stagingDir, { recursive: true, force: true });
   await mkdir(join(stagingDir, "completions"), { recursive: true });
 
-  await $`bun build src/index.ts --compile --target=${target.bunTarget} --outfile=${executablePath}`.cwd(
+  await $`bun build src/index.ts src/apfs-worker.ts --compile --target=${target.bunTarget} --outfile=${executablePath}`.cwd(
     REPO_ROOT,
   );
   await chmod(executablePath, 0o755);

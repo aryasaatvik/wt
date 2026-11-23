@@ -41,10 +41,10 @@ function renderDiskTable(records: WorktreeDiskReport[]): string {
       const usage = record.usage;
       return [
         record.primary ? `${basename(record.path)} (primary)` : basename(record.path),
-        humanSize(usage?.realKb ?? null),
+        humanSize(usage?.checkoutKb ?? null),
         humanSize(usage?.privateGitKb ?? null),
         humanSize(usage?.ownedKb ?? null),
-        humanSize(usage?.checkoutKb ?? null),
+        humanSize(usage?.apparentKb ?? null),
         humanSize(usage?.sharedKb ?? null),
       ].join("\t");
     }),
@@ -58,11 +58,5 @@ export async function cmdDu(options: DuOptions): Promise<string> {
     options.fresh ? "fresh" : "cached",
     only ? { only } : {},
   );
-  if (!options.json) return renderDiskTable(records);
-  const json = records.map((record) => {
-    if (!record.usage) return record;
-    const { realKb: _realKb, ...usage } = record.usage;
-    return { ...record, usage: { ...usage, apparentKb: usage.checkoutKb } };
-  });
-  return JSON.stringify(json, null, 2);
+  return options.json ? JSON.stringify(records, null, 2) : renderDiskTable(records);
 }

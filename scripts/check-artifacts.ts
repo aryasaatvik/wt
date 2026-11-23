@@ -14,9 +14,11 @@ const repo = makeRepo();
 try {
   const tools = join(temp, "bin");
   mkdirSync(tools);
-  const git = Bun.which("git");
-  assert(git, "git is required for the offline fixture");
-  symlinkSync(git, join(tools, "git"));
+  for (const name of ["git", "du"]) {
+    const path = Bun.which(name);
+    assert(path, `${name} is required for the offline fixture`);
+    symlinkSync(path, join(tools, name));
+  }
   const env = {
     ...process.env,
     PATH: tools,
@@ -35,6 +37,14 @@ try {
     assert.equal(records[0].path, repo.dir);
     assert.equal(records[0].branch, "main");
     assert.equal(records[0].dirty, false);
+
+    const disk = spawnSync([binary, "du", "--fresh", "--json"], { cwd: repo.dir, env });
+    assert.equal(disk.exitCode, 0, disk.stderr.toString());
+    const sizes: unknown = JSON.parse(disk.stdout.toString());
+    assert(Array.isArray(sizes) && sizes.length === 1);
+    const { checkoutKb, apparentKb, ownedKb, privateGitKb } = sizes[0].usage;
+    assert(checkoutKb > 0 && apparentKb > 0);
+    assert.equal(ownedKb, checkoutKb + privateGitKb);
   };
   smoke(resolve(import.meta.dir, "../dist/wt"));
   const sums = readFileSync(join(releaseRoot, "SHA256SUMS"), "utf8").trim().split("\n");

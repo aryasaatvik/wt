@@ -171,7 +171,7 @@ describe("scanWorktrees", () => {
     JSON.stringify({
       version: 4,
       measuredAt,
-      usage: { checkoutKb: ownedKb, realKb: ownedKb, privateGitKb: 0, ownedKb, sharedKb: 1 },
+      usage: { checkoutKb: ownedKb, apparentKb: ownedKb, privateGitKb: 0, ownedKb, sharedKb: 1 },
     });
   test("keeps merge commits from both branch listing and commit lookup", async () => {
     const repo = makeRepo();
