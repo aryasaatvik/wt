@@ -58,8 +58,9 @@ export async function planClone(
     git(primary, ["ls-tree", "-rz", "--full-tree", head]),
   ]);
   if (tree.code) return { reason: "could not inspect target tree" };
-  if (hooks.code === 129) {
-    // Older Git can only discover executable files in the effective hooks dir.
+  if (!hooks.stdout.length && (hooks.code === 1 || hooks.code === 129)) {
+    // Exit 1 can mean either an empty list or a Git version without the hook
+    // command. Both need the executable check in the effective hooks dir.
     const hook = await git(primary, [
       "rev-parse",
       "--path-format=absolute",
@@ -79,7 +80,7 @@ export async function planClone(
         return { reason: "could not inspect Git post-checkout hook" };
       }
     }
-  } else if (hooks.code !== 0 && hooks.code !== 1) {
+  } else if (hooks.code !== 0 || !hooks.stdout.length) {
     return { reason: "could not inspect Git post-checkout hook" };
   } else if (hooks.stdout.length) {
     const entries = hooks.stdout.toString().split("\0").filter(Boolean);

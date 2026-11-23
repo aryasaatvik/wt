@@ -4,12 +4,84 @@ import { join } from "node:path";
 import { cmdNew, readProvenance } from "../src/create.ts";
 import { defaultBase, resolvePrimaryRepo } from "../src/git.ts";
 import { ExitError } from "../src/ui.ts";
+import { clonefile, targetAttributes, runWithGitFailure } from "./clone-fixture.ts";
 import { makeRepo } from "./harness.ts";
 
 const OPTS = { verbose: false, install: false, extraFlags: [] };
 
 describe("cmdNew", () => {
   test.if(process.platform === "darwin")(
+    "checks out with Git when target attribute lookup is unavailable",
+    async () => {
+      const repo = makeRepo();
+      try {
+        const run = await runWithGitFailure(repo, "check-attr", "feat/old-git");
+        expect(run.stderr.toString()).toBe("");
+        expect(run.exitCode).toBe(0);
+        const lane = join(repo.root, "repo-worktrees", "feat-old-git");
+        expect(readProvenance(lane)?.checkout).toEqual({
+          mode: "git",
+          cloned: 0,
+          rewritten: 0,
+          reason: "could not inspect target Git attributes",
+        });
+        expect(repo.gitIn(lane, "status", "--porcelain")).toBe("");
+        expect(await Bun.file(join(lane, "README.md")).text()).toBe("fixture\n");
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(targetAttributes && process.platform === "darwin" && !clonefile)(
+    "lets Git populate tracked files on a volume without clone support",
+    async () => {
+      const repo = makeRepo();
+      try {
+        const lane = await cmdNew("feat/no-clonefile", "main", { ...OPTS, cwd: repo.dir });
+        expect(readProvenance(lane)?.checkout).toMatchObject({
+          mode: "clone",
+          cloned: 0,
+          rewritten: 1,
+        });
+        expect(repo.gitIn(lane, "status", "--porcelain")).toBe("");
+        expect(await Bun.file(join(lane, "README.md")).text()).toBe("fixture\n");
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(targetAttributes && process.platform === "darwin")(
+    "records and prints a recovery command after a tracked checkout failure",
+    async () => {
+      const repo = makeRepo();
+      try {
+        const run = await runWithGitFailure(repo, "diff-files", "feat/interrupted");
+        expect(run.exitCode).toBe(1);
+        const lane = join(repo.root, "repo-worktrees", "feat-interrupted");
+        const marker = readProvenance(lane);
+        expect(marker).toMatchObject({
+          phase: "incomplete",
+          failure: "git diff-files failed: fixture Git command unavailable",
+        });
+        const command = marker?.recoveryCommand;
+        if (!command) throw new Error("missing checkout recovery command");
+        expect(run.stderr.toString()).toContain(command);
+        expect(existsSync(join(lane, ".scratchpad"))).toBe(false);
+        repo.gitIn(lane, "update-index", "--force-remove", "--", "README.md");
+        const recovery = Bun.spawnSync(["/bin/sh", "-c", command]);
+        expect(recovery.stderr.toString()).toBe("");
+        expect(recovery.success).toBe(true);
+        expect(repo.gitIn(lane, "status", "--porcelain")).toBe("");
+        expect(await Bun.file(join(lane, "README.md")).text()).toBe("fixture\n");
+      } finally {
+        repo.rm();
+      }
+    },
+  );
+
+  test.if(clonefile && targetAttributes)(
     "clones with an empty effective hooks directory and worktree config enabled",
     async () => {
       const repo = makeRepo();
@@ -41,16 +113,23 @@ describe("cmdNew", () => {
         chmodSync(hook, 0o755);
         repo.git("config", "core.hooksPath", ".git/custom-hooks");
         const head = repo.git("rev-parse", "HEAD").trim();
-        const lane = await cmdNew("feat/hook", "main", { ...OPTS, cwd: repo.dir });
-        expect(readProvenance(lane)?.checkout).toEqual({
-          mode: "git",
-          cloned: 0,
-          rewritten: 0,
-          reason: "Git post-checkout hook",
-        });
-        expect(await Bun.file(join(lane, "hook-call.txt")).text()).toBe(
-          `${lane}\n${"0".repeat(head.length)}\n${head}\n1\n`,
-        );
+        const opts = { ...OPTS, cwd: repo.dir };
+        const native = await cmdNew("feat/hook", "main", opts);
+        const run = await runWithGitFailure(repo, "hook", "feat/legacy-hook");
+        expect(run.stderr.toString()).toBe("");
+        expect(run.exitCode).toBe(0);
+        const legacy = join(repo.root, "repo-worktrees", "feat-legacy-hook");
+        for (const lane of [native, legacy]) {
+          expect(readProvenance(lane)?.checkout).toEqual({
+            mode: "git",
+            cloned: 0,
+            rewritten: 0,
+            reason: "Git post-checkout hook",
+          });
+          expect(await Bun.file(join(lane, "hook-call.txt")).text()).toBe(
+            `${lane}\n${"0".repeat(head.length)}\n${head}\n1\n`,
+          );
+        }
       } finally {
         repo.rm();
       }
@@ -79,11 +158,9 @@ describe("cmdNew", () => {
         expect(repo.gitIn(converted, "ls-files", "-s")).toBe(repo.gitIn(plain, "ls-files", "-s"));
 
         const unaffected = await cmdNew("feat/eligible", "main", { ...OPTS, cwd: repo.dir });
-        expect(readProvenance(unaffected)?.checkout).toEqual({
-          mode: "clone",
-          cloned: 1,
-          rewritten: 0,
-        });
+        const checkout = readProvenance(unaffected)?.checkout;
+        expect(checkout?.mode).toBe(targetAttributes ? "clone" : "git");
+        if (clonefile && targetAttributes) expect(checkout?.cloned).toBe(1);
         expect(await Bun.file(join(unaffected, "README.md")).text()).toBe("fixture\n");
       } finally {
         repo.rm();
@@ -118,7 +195,7 @@ describe("cmdNew", () => {
     },
   );
 
-  test.if(process.platform === "darwin")(
+  test.if(clonefile && targetAttributes)(
     "clones files and lets Git fill paths blocked by a primary file or symlink",
     async () => {
       const repo = makeRepo();
@@ -173,7 +250,9 @@ describe("cmdNew", () => {
           mode: "git",
           cloned: 0,
           rewritten: 0,
-          reason: "Git checkout attribute: eol",
+          reason: targetAttributes
+            ? "Git checkout attribute: eol"
+            : "could not inspect target Git attributes",
         });
         expect(await Bun.file(join(lane, "README.md")).text()).toBe("fixture\r\n");
       } finally {

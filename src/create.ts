@@ -346,9 +346,15 @@ export async function cmdNew(
       checkoutSpin.stop();
       marker.phase = "incomplete";
       marker.failure = e instanceof Error ? e.message : String(e);
+      const quotedLane = shellQuote(wtDir);
+      marker.recoveryCommand = `git -C ${quotedLane} --work-tree=${quotedLane} restore --source=HEAD --staged --worktree -- .`;
       writeProvenance(wtDir, marker);
       err("Failed to check out tracked files");
-      detail(`${marker.failure}\nWorktree kept at ${wtDir}`);
+      detail(
+        `${marker.failure}\nWorktree kept at ${wtDir}\n` +
+          `After saving any local edits, restore tracked files with: ${marker.recoveryCommand}\n` +
+          `Then run wt sync and any remaining setup steps.`,
+      );
       throw new ExitError(1);
     }
     checkoutSpin.stop();

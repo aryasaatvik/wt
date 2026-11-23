@@ -8,6 +8,7 @@ import {
   planClone,
 } from "../src/clone.ts";
 import { readProvenance } from "../src/create.ts";
+import { clonefile, targetAttributes } from "./clone-fixture.ts";
 import { makeRepo } from "./harness.ts";
 
 describe("clone checkout eligibility", () => {
@@ -22,22 +23,25 @@ describe("clone checkout eligibility", () => {
     }
   });
 
-  test("finds checkout attributes in the target commit even when absent from the primary", async () => {
-    const repo = makeRepo();
-    try {
-      repo.git("checkout", "-b", "attributes");
-      repo.write(".gitattributes", "*.md eol=crlf\n");
-      const head = repo.commit("add attributes");
-      repo.git("checkout", "main");
-      const plan = await planClone(repo.dir, head, [], "darwin");
-      if ("reason" in plan) throw new Error(plan.reason);
-      expect(await cloneCheckoutReason(repo.dir, head, plan.files)).toBe(
-        "Git checkout attribute: eol",
-      );
-    } finally {
-      repo.rm();
-    }
-  });
+  test.if(targetAttributes)(
+    "finds checkout attributes in the target commit even when absent from the primary",
+    async () => {
+      const repo = makeRepo();
+      try {
+        repo.git("checkout", "-b", "attributes");
+        repo.write(".gitattributes", "*.md eol=crlf\n");
+        const head = repo.commit("add attributes");
+        repo.git("checkout", "main");
+        const plan = await planClone(repo.dir, head, [], "darwin");
+        if ("reason" in plan) throw new Error(plan.reason);
+        expect(await cloneCheckoutReason(repo.dir, head, plan.files)).toBe(
+          "Git checkout attribute: eol",
+        );
+      } finally {
+        repo.rm();
+      }
+    },
+  );
 
   test("finds gitlinks in the target tree", async () => {
     const repo = makeRepo();
@@ -72,7 +76,7 @@ describe("clone checkout eligibility", () => {
   });
 });
 
-test.if(process.platform === "darwin")("uses Git to repair cloned bytes and mode", async () => {
+test.if(clonefile)("uses Git to repair cloned bytes and mode", async () => {
   const repo = makeRepo();
   try {
     repo.write("dir/-file\nname", "good\n");
@@ -109,7 +113,7 @@ test.if(process.platform === "darwin")("uses Git to repair cloned bytes and mode
   }
 });
 
-test.if(process.platform === "darwin")(
+test.if(clonefile && targetAttributes)(
   "runs the APFS clone worker from the compiled CLI",
   async () => {
     const repo = makeRepo();
