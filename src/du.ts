@@ -34,16 +34,17 @@ function resolveTargetPath(cwd: string, target: string): string {
 }
 
 function renderDiskTable(records: WorktreeDiskReport[]): string {
-  const header = "WORKTREE\tCHECKOUT\tPRIVATE GIT\tOWNED\tSHARED";
+  const header = "WORKTREE\tCHECKOUT\tPRIVATE GIT\tOWNED\tAPPARENT\tSHARED";
   return [
     header,
     ...records.map((record) => {
       const usage = record.usage;
       return [
         record.primary ? `${basename(record.path)} (primary)` : basename(record.path),
-        humanSize(usage?.checkoutKb ?? null),
+        humanSize(usage?.realKb ?? null),
         humanSize(usage?.privateGitKb ?? null),
         humanSize(usage?.ownedKb ?? null),
+        humanSize(usage?.checkoutKb ?? null),
         humanSize(usage?.sharedKb ?? null),
       ].join("\t");
     }),
@@ -57,5 +58,11 @@ export async function cmdDu(options: DuOptions): Promise<string> {
     options.fresh ? "fresh" : "cached",
     only ? { only } : {},
   );
-  return options.json ? JSON.stringify(records, null, 2) : renderDiskTable(records);
+  if (!options.json) return renderDiskTable(records);
+  const json = records.map((record) => {
+    if (!record.usage) return record;
+    const { realKb: _realKb, ...usage } = record.usage;
+    return { ...record, usage: { ...usage, apparentKb: usage.checkoutKb } };
+  });
+  return JSON.stringify(json, null, 2);
 }

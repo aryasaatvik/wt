@@ -25,10 +25,10 @@ export interface WorktreeStatus {
   ahead: number | null;
   behind: number | null;
   sizeKb: number | null;
-  /** true when sizeKb came from the on-disk cache rather than a fresh `du` */
+  /** true when sizeKb came from the on-disk cache. */
   sizeCached: boolean;
   /** Owned checkout + lane-private Git metadata; shared Git storage is separate. */
-  diskUsage: WorktreeDiskUsage | null;
+  diskUsage: Omit<WorktreeDiskUsage, "realKb"> | null;
   lastCommitAt: string | null;
   mtimeMs: number | null;
   prState: PrState;
@@ -43,7 +43,7 @@ export interface PrInfo {
   mergeCommit: string | null;
 }
 
-/** "cached" reuses a recent `du` result; "fresh" always remeasures; "skip" omits size. */
+/** "cached" reuses a recent size measurement; "fresh" always remeasures; "skip" omits size. */
 export type SizeMode = "cached" | "fresh" | "skip";
 
 export interface ScanOptions {
@@ -267,6 +267,11 @@ async function probe(
     // worktree dir may be gone (prunable) — keep the record, without mtime
   }
 
+  let diskUsage: WorktreeStatus["diskUsage"] = null;
+  if (disk) {
+    const { realKb: _realKb, ...usage } = disk.usage;
+    diskUsage = usage;
+  }
   return {
     path: wt.path,
     slug: basename(wt.path),
@@ -283,7 +288,7 @@ async function probe(
     behind,
     sizeKb: disk?.usage.ownedKb ?? null,
     sizeCached: disk?.cached ?? false,
-    diskUsage: disk?.usage ?? null,
+    diskUsage,
     lastCommitAt: lastCommitRes.ok ? lastCommitRes.stdout.trim() || null : null,
     mtimeMs,
   };

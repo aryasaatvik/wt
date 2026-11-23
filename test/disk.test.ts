@@ -55,10 +55,13 @@ describe("owned disk accounting", () => {
       expect(json[0].usage).toEqual(
         expect.objectContaining({
           checkoutKb: linkedUsage.checkoutKb,
+          apparentKb: linkedUsage.checkoutKb,
           privateGitKb: linkedUsage.privateGitKb,
           ownedKb: linkedUsage.ownedKb,
         }),
       );
+      const table = await cmdDu({ cwd: repo.dir, target: "feat/lane", json: false, fresh: false });
+      expect(table.split("\n")[0]).toBe("WORKTREE\tCHECKOUT\tPRIVATE GIT\tOWNED\tAPPARENT\tSHARED");
     } finally {
       repo.rm();
       module.rm();

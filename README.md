@@ -80,7 +80,9 @@ cd "$(wt)"
 
 ### Size cache
 
-`wt ls` reports the space owned by each lane: checkout files plus private Git metadata. It does not charge the primary's shared object/module store to every worktree. `wt du` exposes the full checkout/private/owned/shared breakdown; pass a branch, slug, or path to select one lane, and use `--json` or `--fresh` for automation and remeasurement. Selecting a lane scans only that lane's checkout — shared storage still reflects the repository, and its accounting still sizes each lane's private Git metadata, but no unrelated lane checkout is walked.
+`wt ls` shows each lane's owned size, which includes checkout files and lane-private Git metadata. On APFS, checkout size counts the bytes exclusive to each file. A file cloned only between two lanes counts as zero in both, though removing both lanes frees those shared bytes. Other filesystems use the allocated size from `du`.
+
+`wt du` shows the checkout, private Git, owned and shared sizes, plus an APPARENT column for the allocated checkout size from `du -sk`. Its JSON output reports that value as `apparentKb` and retains the existing `checkoutKb` field. Pass a branch, slug, or path to measure only that lane's checkout. Shared storage still reflects the repository.
 
 Measurements are cached for 24 hours in each worktree's gitdir (`wt-size.json`) using a versioned schema. A `~` prefix in the SIZE column marks a cached value. `--fresh` remeasures on demand, `--no-size` skips measurement entirely; sizes are display-only, so removal safety never depends on them.
 
