@@ -39,14 +39,14 @@ describe("owned disk accounting", () => {
       expect(primaryUsage.privateGitKb).toBe(0);
       expect(linkedUsage.checkoutKb).toBeGreaterThanOrEqual(64);
       expect(linkedUsage.privateGitKb).toBeGreaterThanOrEqual(128);
-      expect(linkedUsage.ownedKb).toBe(linkedUsage.checkoutKb + linkedUsage.privateGitKb);
+      expect(linkedUsage.ownedKb).toBe(linkedUsage.realKb + linkedUsage.privateGitKb);
       expect(linkedUsage.sharedKb).toBeGreaterThan(0);
 
       const cachePath = join(
         repo.gitIn(lane, "rev-parse", "--absolute-git-dir").trim(),
         "wt-size.json",
       );
-      expect(JSON.parse(readFileSync(cachePath, "utf8")).version).toBe(3);
+      expect(JSON.parse(readFileSync(cachePath, "utf8")).version).toBe(4);
 
       const json = JSON.parse(
         await cmdDu({ cwd: repo.dir, target: "feat/lane", json: true, fresh: false }),

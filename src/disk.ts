@@ -7,11 +7,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { privateBytes } from "./apfs.ts";
 import { listWorktrees, resolvePrimaryRepo } from "./git.ts";
 import { runAsync } from "./term.ts";
 
 export interface WorktreeDiskUsage {
   checkoutKb: number;
+  realKb: number;
   privateGitKb: number;
   ownedKb: number;
   sharedKb?: number;
@@ -32,7 +34,7 @@ interface RepoMetadata {
   commonDir: string;
 }
 
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 const CACHE_FILE = "wt-size.json";
 const CACHE_TTL_MS = 24 * 3600_000;
 
@@ -71,8 +73,11 @@ async function sumKb(paths: string[]): Promise<number> {
   return values.reduce((sum, value) => sum + value, 0);
 }
 
-async function checkoutKb(worktree: string, metadata: RepoMetadata[]): Promise<number> {
-  if (!existsSync(worktree)) return 0;
+async function measureCheckout(
+  worktree: string,
+  metadata: RepoMetadata[],
+): Promise<Pick<WorktreeDiskUsage, "checkoutKb" | "realKb">> {
+  if (!existsSync(worktree)) return { checkoutKb: 0, realKb: 0 };
   const entries = readdirSync(worktree)
     .filter((name) => name !== ".git")
     .map((name) => join(worktree, name));
@@ -92,7 +97,9 @@ async function checkoutKb(worktree: string, metadata: RepoMetadata[]): Promise<n
       .flatMap((item) => [item.gitDir, item.commonDir])
       .filter((path) => contains(worktree, path) && !contains(topGit, path)),
   );
-  return Math.max(0, total - (await sumKb(nestedMetadata)));
+  const checkoutKb = Math.max(0, total - (await sumKb(nestedMetadata)));
+  const bytes = privateBytes(worktree, new Set([topGit, ...nestedMetadata]));
+  return { checkoutKb, realKb: bytes === null ? checkoutKb : Math.ceil(bytes / 1024) };
 }
 
 async function metadataFor(repoPath: string): Promise<RepoMetadata | null> {
@@ -148,7 +155,12 @@ function readCache(path: string | null): WorktreeDiskUsage | null {
     const age = Date.now() - Date.parse(String(value.measuredAt));
     if (value.version !== CACHE_VERSION || age < 0 || age >= CACHE_TTL_MS || !value.usage)
       return null;
-    const fields = [value.usage.checkoutKb, value.usage.privateGitKb, value.usage.ownedKb];
+    const fields = [
+      value.usage.checkoutKb,
+      value.usage.realKb,
+      value.usage.privateGitKb,
+      value.usage.ownedKb,
+    ];
     return fields.every((field) => typeof field === "number" && Number.isFinite(field))
       ? value.usage
       : null;
@@ -245,12 +257,12 @@ export async function measureDiskUsage(
         };
       }
       const tree = metadata[index]!;
-      const checkoutSizeKb = await checkoutKb(worktree.path, tree);
+      const checkout = await measureCheckout(worktree.path, tree);
       const privateGitKb = await sumKb(privateByWorktree[index]!);
       const usage = {
-        checkoutKb: checkoutSizeKb,
+        ...checkout,
         privateGitKb,
-        ownedKb: checkoutSizeKb + privateGitKb,
+        ownedKb: checkout.realKb + privateGitKb,
         sharedKb,
       };
       writeCache(cachePath(tree), usage);
