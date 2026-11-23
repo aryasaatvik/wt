@@ -1,5 +1,5 @@
 import { parentPort, workerData } from "node:worker_threads";
-import { privateBytes } from "./apfs.ts";
+import { scanApfsUsage } from "./apfs.ts";
 
 export interface ScanRequest {
   root: string;
@@ -8,5 +8,5 @@ export interface ScanRequest {
 
 if (parentPort) {
   const request: ScanRequest = workerData;
-  parentPort.postMessage(privateBytes(request.root, new Set(request.excludedPaths)));
+  parentPort.postMessage(scanApfsUsage(request.root, new Set(request.excludedPaths)));
 }

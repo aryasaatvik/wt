@@ -11,8 +11,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { measurePrivateBytes } from "../src/apfs-measure.ts";
-import { privateBytes } from "../src/apfs.ts";
+import { measureApfsUsage } from "../src/apfs-measure.ts";
+import { scanApfsUsage } from "../src/apfs.ts";
 
 const apfsTempDir =
   process.platform === "darwin" && Bun.spawnSync(["/bin/df", "-T", "apfs", tmpdir()]).success;
@@ -40,12 +40,18 @@ test.skipIf(!apfsTempDir)("counts APFS private bytes and deduplicates hard links
       lib.symbols.clonefile(encoder.encode(original + "\0"), encoder.encode(clone + "\0"), 0),
     ).toBe(0);
     symlinkSync(directory, join(checkout, "external"));
-    expect(privateBytes(checkout)).toBe(0);
+    expect(scanApfsUsage(checkout)).toEqual({ privateBytes: 0, allocatedBytes: size });
 
     copyFileSync(original, copy);
     linkSync(copy, join(checkout, "nested", "hard-link"));
-    expect(await measurePrivateBytes(checkout, [])).toBe(size);
-    expect(privateBytes(checkout, new Set([join(checkout, "nested"), copy]))).toBe(0);
+    expect(await measureApfsUsage(checkout, [])).toEqual({
+      privateBytes: size,
+      allocatedBytes: 2 * size,
+    });
+    expect(scanApfsUsage(checkout, new Set([join(checkout, "nested"), copy]))).toEqual({
+      privateBytes: 0,
+      allocatedBytes: size,
+    });
   } finally {
     lib.close();
     rmSync(directory, { recursive: true, force: true });

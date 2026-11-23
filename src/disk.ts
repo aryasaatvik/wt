@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { measurePrivateBytes } from "./apfs-measure.ts";
+import { measureApfsUsage } from "./apfs-measure.ts";
 import { listWorktrees, resolvePrimaryRepo } from "./git.ts";
 import { runAsync } from "./term.ts";
 
@@ -78,6 +78,19 @@ async function measureCheckout(
   metadata: RepoMetadata[],
 ): Promise<Pick<WorktreeDiskUsage, "checkoutKb" | "apparentKb">> {
   if (!existsSync(worktree)) return { checkoutKb: 0, apparentKb: 0 };
+  const topGit = join(worktree, ".git");
+  const nestedMetadata = minimalRoots(
+    metadata
+      .flatMap((item) => [item.gitDir, item.commonDir])
+      .filter((path) => contains(worktree, path) && !contains(topGit, path)),
+  );
+  const usage = await measureApfsUsage(worktree, [topGit, ...nestedMetadata]);
+  if (usage) {
+    return {
+      checkoutKb: Math.ceil(usage.privateBytes / 1024),
+      apparentKb: Math.ceil(usage.allocatedBytes / 1024),
+    };
+  }
   const entries = readdirSync(worktree)
     .filter((name) => name !== ".git")
     .map((name) => join(worktree, name));
@@ -91,18 +104,8 @@ async function measureCheckout(
     else owned.push(path);
   }
   const total = (await sumKb(owned)) + linksKb;
-  const topGit = join(worktree, ".git");
-  const nestedMetadata = minimalRoots(
-    metadata
-      .flatMap((item) => [item.gitDir, item.commonDir])
-      .filter((path) => contains(worktree, path) && !contains(topGit, path)),
-  );
-  const [nestedKb, bytes] = await Promise.all([
-    sumKb(nestedMetadata),
-    measurePrivateBytes(worktree, [topGit, ...nestedMetadata]),
-  ]);
-  const apparentKb = Math.max(0, total - nestedKb);
-  return { checkoutKb: bytes === null ? apparentKb : Math.ceil(bytes / 1024), apparentKb };
+  const apparentKb = Math.max(0, total - (await sumKb(nestedMetadata)));
+  return { checkoutKb: apparentKb, apparentKb };
 }
 
 async function metadataFor(repoPath: string): Promise<RepoMetadata | null> {
