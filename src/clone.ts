@@ -56,7 +56,7 @@ export async function planClone(
       "config",
       "--null",
       "--get-regexp",
-      "^(core\\.(sparsecheckout|autocrlf|symlinks|hookspath)|extensions\\.worktreeconfig|includeif\\..*\\.path)$",
+      "^(core\\.(sparsecheckout|autocrlf|symlinks|hookspath|worktree|protecthfs)|extensions\\.worktreeconfig|includeif\\..*\\.path)$",
     ]),
     git(primary, ["rev-parse", "--path-format=absolute", "--git-path", "hooks/post-checkout"]),
     git(primary, ["ls-tree", "-rz", "--full-tree", head]),
@@ -81,12 +81,15 @@ export async function planClone(
     return { reason: "core.autocrlf conversion" };
   if (isFalse(settings.get("core.symlinks") ?? "true"))
     return { reason: "core.symlinks is disabled" };
+  if (isFalse(settings.get("core.protecthfs") ?? "true"))
+    return { reason: "Git macOS path protection is disabled" };
   if (settings.has("core.hookspath") || existsSync(hooks.stdout.toString().replace(/\n$/, ""))) {
     return { reason: "Git post-checkout hook may run" };
   }
   // Per-worktree config can differ between the primary and the new lane.
   if (
     !isFalse(settings.get("extensions.worktreeconfig") ?? "false") ||
+    settings.has("core.worktree") ||
     [...settings.keys()].some((key) => key.startsWith("includeif."))
   ) {
     return { reason: "per-worktree Git config" };
@@ -253,6 +256,9 @@ function cloneBatch({ primary, lane, files, stop, umask }: CloneBatch): number {
 if (!isMainThread && workerData?.kind === "wt-clone-checkout") {
   const batch: CloneBatch = workerData;
   parentPort?.postMessage(cloneBatch(batch));
+  // In a compiled executable the worker enters through the bundled CLI module.
+  // Exit the worker before evaluation can reach the command dispatcher.
+  process.exit(0);
 }
 
 export interface CheckoutRecord {
@@ -269,9 +275,11 @@ export async function checkoutClone(
   files: TrackedFile[],
   record: CheckoutRecord,
 ): Promise<void> {
-  const rev = await git(lane, ["rev-parse", "HEAD"]);
-  if (rev.code || rev.stdout.toString().trim() !== head)
-    throw new Error("worktree HEAD changed during creation");
+  const destination = realpathSync.native(lane);
+  const rev = await git(lane, ["rev-parse", "--show-toplevel", "HEAD"]);
+  if (rev.code || rev.stdout.toString() !== `${destination}\n${head}\n`) {
+    throw new Error("worktree root or HEAD changed during creation");
+  }
 
   // Read a fresh index with no stat cache. Git must compare even same-size files
   // with matching mtimes, and an executable bit remains significant here.
@@ -286,14 +294,15 @@ export async function checkoutClone(
     "core.trustctime=true",
     "-c",
     "core.checkStat=default",
+    "-c",
+    "core.protectHFS=true",
   ];
-  const readTree = await git(lane, [...verify, "read-tree", "HEAD"]);
+  const readTree = await git(lane, [...verify, "read-tree", head]);
   if (readTree.code) throw new Error(`git read-tree failed: ${readTree.stderr.trim()}`);
 
   const stop = new Int32Array(new SharedArrayBuffer(4));
   const chunkSize = Math.max(256, Math.ceil(files.length / 8));
   const batches: Promise<number>[] = [];
-  const destination = realpathSync.native(lane);
   for (let i = 0; i < files.length; i += chunkSize) {
     const batch: CloneBatch = {
       kind: "wt-clone-checkout",
@@ -305,7 +314,7 @@ export async function checkoutClone(
     };
     batches.push(
       new Promise((resolve, reject) => {
-        const worker = new Worker(new URL("./clone.ts", import.meta.url), { workerData: batch });
+        const worker = new Worker(new URL(import.meta.url), { workerData: batch });
         let cloned: number | undefined;
         let failure: unknown;
         worker.on("message", (count: number) => {

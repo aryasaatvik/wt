@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, lstatSync, readFileSync, readlinkSync, symlinkSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { type CheckoutRecord, checkoutClone, planClone } from "../src/clone.ts";
+import { readProvenance } from "../src/create.ts";
 import { makeRepo } from "./harness.ts";
 
 describe("clone checkout eligibility", () => {
@@ -99,3 +100,41 @@ test.if(process.platform === "darwin")("uses Git to repair cloned bytes and mode
     repo.rm();
   }
 });
+
+test.if(process.platform === "darwin")(
+  "runs the APFS clone worker from the compiled CLI",
+  async () => {
+    const repo = makeRepo();
+    try {
+      const binary = join(repo.root, "wt");
+      const build = Bun.spawnSync(
+        [process.execPath, "build", "src/index.ts", "--compile", "--outfile", binary],
+        { cwd: join(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" },
+      );
+      expect(build.stderr.toString()).not.toContain("error:");
+      expect(build.exitCode).toBe(0);
+      const run = Bun.spawnSync([binary, "new", "feat/standalone", "main", "--no-install"], {
+        cwd: repo.dir,
+        env: {
+          ...Bun.env,
+          GIT_CONFIG_GLOBAL: "/dev/null",
+          GIT_CONFIG_SYSTEM: "/dev/null",
+          XDG_CONFIG_HOME: join(repo.root, "config"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(run.stderr.toString()).toBe("");
+      expect(run.exitCode).toBe(0);
+      const lane = join(repo.root, "repo-worktrees", "feat-standalone");
+      expect(readProvenance(lane)?.checkout).toEqual({
+        mode: "clone",
+        cloned: 1,
+        rewritten: 0,
+      });
+      expect(repo.gitIn(lane, "status", "--porcelain")).toBe("");
+    } finally {
+      repo.rm();
+    }
+  },
+);
